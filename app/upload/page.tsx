@@ -376,67 +376,42 @@ export default function UploadPage() {
       console.log('Book uploaded to Arweave. TX ID:', arweaveTxId)
       setProgress(75)
 
-      // ── Step 6: Store the encryption key on the key server ─────────────
-      // The AES key and IV are stored in Supabase, indexed by arweaveTxId.
-      // The key server will only release the key if:
-      //   1. The requester provides a valid wallet address
-      //   2. The wallet address owns an NFT token for this book (verified on-chain)
-      //
-      // This means: even if someone finds the encrypted file on Arweave,
-      // they can't decrypt it without owning the NFT.
+      // ── Step 6: Submit the signed Stellar transaction ──────────────────────
+      setStep('Submitting to Stellar...')
+      const submitResult = await submitSignedTransaction(signedXdr)
+      console.log('Stellar transaction submitted:', submitResult)
+      setProgress(85)
+
+      // ── Step 7: Get bookId and update Arweave TX ID on-chain ───────────────
+      setStep('Updating on-chain metadata...')
+      let bookId = -1
+      try {
+        const totalBooks = await getTotalBooks(walletAddress)
+        bookId = totalBooks - 1
+        console.log('Book registered with ID:', bookId)
+        await updateArweaveTx(walletAddress, bookId, arweaveTxId)
+        console.log('Arweave TX ID written on-chain successfully')
+      } catch (updateErr) {
+        console.error('Could not update Arweave TX ID on-chain (non-fatal):', updateErr)
+      }
+      setProgress(90)
+
+      // ── Step 8: Store the encryption key on the key server ─────────────────
       setStep('Storing encryption key...')
       const keyRes = await fetch('/api/keys', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           arweaveTxId,
-          key: keyHex,   // hex-encoded AES-256-GCM key
-          iv,            // hex-encoded IV (required for decryption)
-          walletAddress, // creator's wallet — used for initial access verification
+          bookId,
+          key: keyHex,
+          iv,
+          walletAddress,
         }),
       })
       if (!keyRes.ok) {
         const keyErr = await keyRes.json()
         throw new Error(keyErr.error || 'Failed to store encryption key')
-      }
-      setProgress(85)
-
-      // ── Step 7: Submit the signed Stellar transaction ──────────────────
-      // We submit the XDR-encoded transaction that was signed in Step 3.
-      // This registers the book on the Soroban contract and assigns it a
-      // numeric bookId. The bookId is used in Step 8 to update the TX ID.
-      setStep('Submitting to Stellar...')
-      const submitResult = await submitSignedTransaction(signedXdr)
-      console.log('Stellar transaction submitted:', submitResult)
-      setProgress(90)
-
-      // ── Step 8: Update the Arweave TX ID on-chain ──────────────────────
-      // The Soroban contract currently stores the placeholder TX ID from Step 3.
-      // Now that we have the real Arweave TX ID, we update it on-chain.
-      //
-      // This is what makes the ownership → content mapping fully on-chain:
-      //   wallet → NFT token → bookId → arweaveTxId (from Soroban) → content
-      //
-      // After this step, ownership can be proven purely from the NFT with
-      // no dependency on localStorage, Supabase, or any other off-chain store.
-      //
-      // How we get the bookId:
-      //   getTotalBooks() returns the total number of books ever registered.
-      //   The book we just registered is the last one, so bookId = total - 1.
-      //   Books are indexed from 0.
-      //
-      // Non-fatal: if this fails, the book is still uploaded and the NFT
-      // still works — the arweaveTxId just won't be resolvable from chain alone.
-      setStep('Updating on-chain metadata...')
-      try {
-        const totalBooks = await getTotalBooks(walletAddress)
-        const bookId = totalBooks - 1
-        console.log('Book registered with ID:', bookId)
-
-        await updateArweaveTx(walletAddress, bookId, arweaveTxId)
-        console.log('Arweave TX ID written on-chain successfully')
-      } catch (updateErr) {
-        console.error('Could not update Arweave TX ID on-chain (non-fatal):', updateErr)
       }
       setProgress(100)
 
