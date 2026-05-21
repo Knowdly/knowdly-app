@@ -56,37 +56,83 @@ async function verifyOwnership(
     const contract = new Contract(CONTRACT_ID)
     const account  = new Account(walletAddress, '0')
 
-    const transaction = new TransactionBuilder(account, {
+    // get all token IDs owned by this wallet
+    const getTokensTransaction = new TransactionBuilder(account, {
       fee:               BASE_FEE,
       networkPassphrase: NETWORK,
     })
       .addOperation(
         contract.call(
-          'owns_book',
-          nativeToScVal(walletAddress,  { type: 'address' }),
-          nativeToScVal(BigInt(bookId), { type: 'u64' }),
+          'get_tokens_by_owner',
+          nativeToScVal(walletAddress, { type: 'address' }),
         )
       )
       .setTimeout(30)
       .build()
 
-    const simResponse = await fetch(RPC_URL, {
+    const tokensResponse = await fetch(RPC_URL, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jsonrpc: '2.0',
         id:      1,
         method:  'simulateTransaction',
-        params:  { transaction: transaction.toXDR() },
+        params:  { transaction: getTokensTransaction.toXDR() },
       }),
     })
 
-    const simData   = await simResponse.json()
-    const returnVal = simData.result?.results?.[0]?.xdr
-    if (!returnVal) return false
+    const tokensData = await tokensResponse.json()
+    const tokensXdr  = tokensData.result?.results?.[0]?.xdr
+    if (!tokensXdr) return false
 
-    const scVal = xdr.ScVal.fromXDR(returnVal, 'base64')
-    return scValToNative(scVal) as boolean
+    const tokenIds = scValToNative(xdr.ScVal.fromXDR(tokensXdr, 'base64')) as any[]
+    if (!tokenIds || tokenIds.length === 0) return false
+
+    console.log(`Wallet ${walletAddress} owns token IDs:`, tokenIds.map(Number))
+
+    // for each token check if it matches the requested bookId
+    for (const rawTokenId of tokenIds) {
+      const tokenId = Number(rawTokenId)
+
+      const getTokenTransaction = new TransactionBuilder(account, {
+        fee:               BASE_FEE,
+        networkPassphrase: NETWORK,
+      })
+        .addOperation(
+          contract.call(
+            'get_token',
+            nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+          )
+        )
+        .setTimeout(30)
+        .build()
+
+      const tokenResponse = await fetch(RPC_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id:      1,
+          method:  'simulateTransaction',
+          params:  { transaction: getTokenTransaction.toXDR() },
+        }),
+      })
+
+      const tokenData = await tokenResponse.json()
+      const tokenXdr  = tokenData.result?.results?.[0]?.xdr
+      if (!tokenXdr) continue
+
+      const token  = scValToNative(xdr.ScVal.fromXDR(tokenXdr, 'base64')) as any
+      const tBookId = Number(token?.book_id)
+      console.log(`Token ${tokenId} → bookId ${tBookId}`)
+
+      if (tBookId === bookId) {
+        console.log(`Ownership confirmed: wallet owns token ${tokenId} for book ${bookId}`)
+        return true
+      }
+    }
+
+    return false
 
   } catch (err) {
     console.error('Ownership verification failed:', err)
