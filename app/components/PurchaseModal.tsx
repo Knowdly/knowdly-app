@@ -196,6 +196,23 @@ export default function PurchaseModal({ book, onClose, onSuccess }: Props) {
       if (accessResult.error) throw new Error('Wallet connection was rejected')
       const studentAddress = accessResult.address
 
+      // ── Step 1b: Resolve sorobanBookId if not available from localStorage ──
+      // On devices where the book wasn't uploaded, sorobanBookId is -1.
+      // Look it up from Supabase using the arweaveTxId.
+      let sorobanBookId = book.sorobanBookId
+      if (sorobanBookId === -1) {
+        try {
+          const bookIdRes  = await fetch(`/api/books/bookid?arweaveTxId=${book.txId}`)
+          const bookIdData = await bookIdRes.json()
+          if (bookIdRes.ok && bookIdData.bookId !== undefined) {
+            sorobanBookId = bookIdData.bookId
+            console.log('Resolved sorobanBookId from Supabase:', sorobanBookId)
+          }
+        } catch (err) {
+          console.error('Could not resolve sorobanBookId (non-fatal):', err)
+        }
+      }
+
       // ── Step 2: Load account + verify USDC ────────────────────────────────
       setStatus('loading_book')
 
@@ -229,10 +246,10 @@ export default function PurchaseModal({ book, onClose, onSuccess }: Props) {
       }
 
       // ── Step 3: Get publisher address from contract ───────────────────────
-      const publisherAddress = await getPublisherAddress(book.sorobanBookId)
+      const publisherAddress = await getPublisherAddress(sorobanBookId)
 
       // ── Step 4: Get Soroban book ID — already on the book object ──────────
-      const sorobanBookId = book.sorobanBookId
+      
 
       // ── Step 5: Simulate NFT mint BEFORE payment ──────────────────────────
       // If this would fail (already owned, book inactive, etc.) we abort now
