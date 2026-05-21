@@ -51,12 +51,13 @@ const EPUB_THEME = {
 
 function patchEpubSandbox(container: HTMLDivElement | null) {
   if (!container) return
-  const iframe = container.querySelector('iframe')
-  if (!iframe) return
-  const existing = iframe.getAttribute('sandbox') ?? ''
-  if (!existing.includes('allow-scripts')) {
-    iframe.setAttribute('sandbox', (existing + ' allow-scripts allow-same-origin').trim())
-  }
+  const iframes = container.querySelectorAll('iframe')
+  iframes.forEach(iframe => {
+    const existing = iframe.getAttribute('sandbox') ?? ''
+    if (!existing.includes('allow-scripts')) {
+      iframe.setAttribute('sandbox', (existing + ' allow-scripts allow-same-origin').trim())
+    }
+  })
 }
 
 export default function ReaderPage() {
@@ -193,7 +194,7 @@ export default function ReaderPage() {
         rendition.themes.default(EPUB_THEME)
 
         rendition.on('rendered', (section: any) => {
-          patchEpubSandbox(epubContainerRef.current)
+          setTimeout(() => patchEpubSandbox(epubContainerRef.current), 50)
           const item = book.navigation?.toc?.find(
             (t: any) => t.href && section?.href && t.href.includes(section.href.split('/').pop())
           )
