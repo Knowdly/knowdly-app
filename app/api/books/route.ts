@@ -16,6 +16,18 @@
 //   └─────────────────────────────────────────────────────┘
 //
 // Results from both sources are merged and deduplicated by arweave_tx_id.
+//
+// ── COVER IMAGES ──────────────────────────────────────────────────────────────
+// Cover images are stored as separate Arweave transactions.
+// The book transaction has a 'Cover-Tx-Id' tag pointing to the cover TX.
+// The Supabase books table has a cover_tx_id column as a fast cache.
+//
+// Cover TX IDs are included in the Book object returned by this route.
+// The library uses them to fetch covers via:
+//   https://arweave.net/<coverTxId>
+//
+// If no cover exists, the library shows a styled placeholder with
+// the book title and author.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
@@ -24,14 +36,11 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // ── Arweave GraphQL endpoint ──────────────────────────────────────────────────
-// Reads from env var — defaults to ArLocal for local dev
 // Dev:        ARWEAVE_GRAPHQL=http://localhost:1984/graphql
 // Production: ARWEAVE_GRAPHQL=https://arweave.net/graphql
-
 const ARWEAVE_GRAPHQL = process.env.ARWEAVE_GRAPHQL ?? 'https://arweave.net/graphql'
 
-// ── Supabase client ───────────────────────────────────────────────────────────
-
+// ── Supabase client factory ───────────────────────────────────────────────────
 function getSupabase() {
   const url = process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_KEY
@@ -55,20 +64,22 @@ type Book = {
   royalty:       string
   fileName:      string
   contentType:   string
-  contentFormat: string
+  contentFormat: string   // PDF | EPUB | TXT
   contentMime:   string
   category:      string
+  coverTxId:     string   // Arweave TX ID of cover image — empty string if none
 }
-
-type SortOption = 'recent' | 'price-low' | 'price-high' | 'title'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// Finds a tag value by name from an array of Arweave tags
 function tag(tags: Tag[], name: string): string {
   return tags.find(t => t.name === name)?.value || ''
 }
 
-// supports both old tag schema (Book-Title) and new schema (Title)
+// Converts an Arweave GraphQL node to a Book object.
+// Supports both old tag schema (Book-Title) and new schema (Title)
+// for backwards compatibility with early test uploads.
 function nodeToBook(node: Node): Book {
   const tags = node.tags
   return {
@@ -85,30 +96,35 @@ function nodeToBook(node: Node): Book {
     contentFormat: tag(tags, 'Content-Format') || 'PDF',
     contentMime:   tag(tags, 'Content-Mime')   || 'application/pdf',
     category:      tag(tags, 'Category'),
+    coverTxId:     tag(tags, 'Cover-Tx-Id'),   // empty string if no cover tag
   }
 }
 
+// Converts a Supabase row to a Book object.
+// The cover_tx_id column was added to the books table to cache the cover TX ID.
 function rowToBook(row: any): Book {
   return {
     txId:          row.arweave_tx_id,
-    title:         row.title         || '',
-    author:        row.author        || '',
-    isbn:          row.isbn          || '',
-    edition:       row.edition       || '',
-    description:   row.description   || '',
-    price:         row.price         || '0',
-    royalty:       row.royalty       || '0',
-    fileName:      row.file_name     || '',
+    title:         row.title          || '',
+    author:        row.author         || '',
+    isbn:          row.isbn           || '',
+    edition:       row.edition        || '',
+    description:   row.description    || '',
+    price:         row.price          || '0',
+    royalty:       row.royalty        || '0',
+    fileName:      row.file_name      || '',
     contentType:   'application/octet-stream',
     contentFormat: row.content_format || 'PDF',
     contentMime:   row.content_mime   || 'application/pdf',
     category:      row.category       || '',
+    coverTxId:     row.cover_tx_id    || '',   // null → empty string
   }
 }
 
 // ── CENTRALISED INDEX — query Supabase ────────────────────────────────────────
-// Fast primary source — written to on every upload
-// Returns books instantly with no GraphQL indexing delay
+// Fast primary source — written to on every upload.
+// Returns books instantly with no GraphQL indexing delay.
+// Includes cover_tx_id from the books table.
 
 async function querySupabase(
   search:   string,
@@ -117,15 +133,18 @@ async function querySupabase(
 ): Promise<Book[]> {
   const supabase = getSupabase()
 
+  // select all columns — this includes cover_tx_id now that the column exists
   let query = supabase
     .from('books')
     .select('*')
     .order('created_at', { ascending: false })
 
-  // apply filters
+  // filter by category (case-insensitive)
   if (category.trim()) {
     query = query.ilike('category', category.trim())
   }
+
+  // filter by content format (PDF, EPUB, TXT)
   if (format.trim()) {
     query = query.ilike('content_format', format.trim())
   }
@@ -139,7 +158,8 @@ async function querySupabase(
 
   let books = (data || []).map(rowToBook)
 
-  // apply search filter client-side (Supabase full-text search is overkill for now)
+  // search is applied client-side here — fast enough for current catalogue size
+  // upgrade to Supabase full-text search when catalogue grows
   if (search.trim()) {
     const term = search.toLowerCase()
     books = books.filter(b =>
@@ -155,15 +175,17 @@ async function querySupabase(
 }
 
 // ── DECENTRALISED INDEX — query Arweave GraphQL ───────────────────────────────
-// Permanent fallback — always available as long as Arweave exists
-// Note: new transactions take 10-30 minutes to appear after upload on mainnet
-// Used when Supabase is unavailable or returns no results
+// Permanent fallback — always available as long as Arweave exists.
+// Note: new transactions take 10-30 minutes to appear after upload on mainnet.
+// Cover TX IDs are read from the Cover-Tx-Id tag on each book transaction.
 
 async function queryArweave(
   search:   string,
   category: string,
   format:   string,
 ): Promise<Book[]> {
+  // query all transactions tagged with App-Name: Knowdly
+  // sorted by block height descending (most recent first)
   const query = `
     query {
       transactions(
@@ -198,9 +220,18 @@ async function queryArweave(
 
   for (const edge of edges) {
     const node: Node = edge.node
+
+    // double-check App-Name tag — GraphQL filter should handle this but be safe
     if (tag(node.tags, 'App-Name') !== 'Knowdly') continue
+
+    // skip cover image transactions — they have Type: Book-Cover
+    // we only want the encrypted book transactions here
+    if (tag(node.tags, 'Type') === 'Book-Cover') continue
+
     const title = tag(node.tags, 'Title') || tag(node.tags, 'Book-Title')
     if (!title) continue
+
+    // nodeToBook reads the Cover-Tx-Id tag if present
     books.push(nodeToBook(node))
   }
 
@@ -227,10 +258,11 @@ async function queryArweave(
 
 // ── GET /api/books ────────────────────────────────────────────────────────────
 // Dual indexing strategy:
-//   1. Query Supabase first (fast, centralised)
-//   2. Query Arweave GraphQL as fallback (slow, decentralised)
+//   1. Query Supabase first (fast, centralised, includes cover_tx_id)
+//   2. Query Arweave GraphQL as fallback (slow, decentralised, reads Cover-Tx-Id tag)
 //   3. Filter both against Supabase blocklist
 //   4. Merge and deduplicate results by txId
+//   5. Return merged list including coverTxId for each book
 
 export async function GET(request: NextRequest) {
   try {
@@ -239,10 +271,10 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category') || ''
     const format   = searchParams.get('format')   || ''
 
-    // ── Fetch blocklist from Supabase ─────────────────────────────────────────
-    // Blocks specific Arweave TX IDs from appearing in the library
-    // Used to hide test uploads, unavailable books, or flagged content
-    // Permanently stored on Arweave but hidden from discovery
+    // ── Fetch blocklist ───────────────────────────────────────────────────────
+    // Blocks specific Arweave TX IDs from appearing in the library.
+    // Used to hide test uploads, unavailable books, or flagged content.
+    // Permanently stored on Arweave but hidden from discovery via this list.
     let blockedIds = new Set<string>()
     try {
       const supabase = getSupabase()
@@ -257,7 +289,7 @@ export async function GET(request: NextRequest) {
       console.error('Could not fetch blocklist (non-fatal):', err)
     }
 
-    // ── Step 1: Query Supabase (primary centralised index) ────────────────────
+    // ── Step 1: Query Supabase (primary) ──────────────────────────────────────
     let supabaseBooks: Book[] = []
     try {
       supabaseBooks = (await querySupabase(search, category, format))
@@ -266,7 +298,7 @@ export async function GET(request: NextRequest) {
       console.error('Supabase query failed, falling back to Arweave:', err)
     }
 
-    // ── Step 2: Query Arweave GraphQL (decentralised fallback) ────────────────
+    // ── Step 2: Query Arweave GraphQL (fallback) ──────────────────────────────
     let arweaveBooks: Book[] = []
     try {
       arweaveBooks = (await queryArweave(search, category, format))
@@ -276,6 +308,8 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Step 3: Merge and deduplicate ─────────────────────────────────────────
+    // Supabase results take priority — they have cover_tx_id populated.
+    // Arweave results are added only if not already in Supabase results.
     const seen  = new Set<string>()
     const books: Book[] = []
 
