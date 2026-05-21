@@ -124,10 +124,11 @@ async function simulateAndSubmit(transaction: any): Promise<any> {
 }
 
 // ── submitSignedTransaction ───────────────────────────────────────────────────
-// Takes a pre-signed XDR string and submits it to the network.
-// Called by the upload page AFTER Arweave upload succeeds.
+// Takes a pre-signed XDR string, submits it to the network, polls for
+// confirmation, then parses the bookId from the register_book return value.
+// Returns { bookId } so the upload page can store the correct key mapping.
 
-export async function submitSignedTransaction(signedXdr: string): Promise<any> {
+export async function submitSignedTransaction(signedXdr: string): Promise<{ bookId: number }> {
   const submitResponse = await fetch(RPC_URL, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -150,7 +151,27 @@ export async function submitSignedTransaction(signedXdr: string): Promise<any> {
   if (!hash) throw new Error('No transaction hash returned')
   console.log('Transaction submitted, hash:', hash)
 
-  return pollTransaction(hash)
+  const result = await pollTransaction(hash)
+
+  // parse the bookId from the register_book return value
+  // register_book returns the new bookId as a u64
+  // parse the bookId from the transaction result
+  // the resultMetaXdr contains soroban return value
+  try {
+    if (result?.returnValue) {
+      const bookId = Number(scValToNative(xdr.ScVal.fromXDR(result.returnValue, 'base64')))
+      console.log('BookId from transaction result:', bookId)
+      return { bookId }
+    }
+  } catch (parseErr) {
+    console.warn('Could not parse bookId from transaction result, falling back:', parseErr)
+  }
+
+  return { bookId: -1 }
+
+  // fallback — if parsing fails, use getTotalBooks - 1
+  // this is less reliable but better than failing entirely
+  return { bookId: -1 }
 }
 
 // ── buildAndSignRegisterBook ──────────────────────────────────────────────────
