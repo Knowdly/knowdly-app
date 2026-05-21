@@ -17,16 +17,26 @@ export async function GET(
 
     console.log('Content proxy fetching txId:', txId)
 
+    const gateway = process.env.ARWEAVE_HOST
+  ? `https://${process.env.ARWEAVE_HOST}`
+  : 'https://arweave.net'
+
     // fetch from ArLocal on the server side — no CORS issues here
     // ArLocal requires /data suffix to get raw file content
     // on mainnet arweave.net/<txId> returns the data directly
-    const gateway = process.env.ARWEAVE_HOST
-    ? `https://${process.env.ARWEAVE_HOST}`
-    : 'https://arweave.net'
-    const response = await fetch(`${gateway}/${txId}`)
+    const response = await fetch(`${gateway}/${txId}`, {
+      redirect: 'follow',
+      headers: {
+        'Accept': 'application/octet-stream, */*',
+      }
+    })
 
-    console.log('ArLocal response status:', response.status)
-    console.log('ArLocal content type:', response.headers.get('content-type'))
+    console.log('Fetching from:', `${gateway}/${txId}`)
+    console.log('Final URL after redirect:', response.url)
+    console.log('Response status:', response.status)
+
+    //console.log('ArLocal response status:', response.status)
+    //console.log('ArLocal content type:', response.headers.get('content-type'))
 
     if (!response.ok) {
       return NextResponse.json(
