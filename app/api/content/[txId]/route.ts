@@ -17,9 +17,7 @@ export async function GET(
 
     console.log('Content proxy fetching txId:', txId)
 
-    const gateway = process.env.ARWEAVE_HOST
-  ? `https://${process.env.ARWEAVE_HOST}`
-  : 'https://arweave.net'
+    const gateway = 'https://gateway.irys.xyz'
 
     // fetch from ArLocal on the server side — no CORS issues here
     // ArLocal requires /data suffix to get raw file content
