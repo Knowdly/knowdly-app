@@ -141,7 +141,7 @@ export default function ReaderPage() {
       // Step 2: fetch encrypted content
       // Uses NEXT_PUBLIC_ARWEAVE_GATEWAY — localhost:1984 in dev, arweave.net in prod
       setLoadingMsg('Downloading encrypted content...')
-      const contentRes = await fetch(`${ARWEAVE_GATEWAY}/${txId}`)
+      const contentRes = await fetch(`/api/content/${txId}`)
       if (!contentRes.ok) throw new Error('Could not fetch content: ' + contentRes.status)
       const encryptedBuffer = await contentRes.arrayBuffer()
       console.log('Encrypted size:', encryptedBuffer.byteLength)

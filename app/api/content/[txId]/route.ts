@@ -20,7 +20,10 @@ export async function GET(
     // fetch from ArLocal on the server side — no CORS issues here
     // ArLocal requires /data suffix to get raw file content
     // on mainnet arweave.net/<txId> returns the data directly
-    const response = await fetch(`http://localhost:1984/${txId}/data`)
+    const gateway = process.env.ARWEAVE_HOST
+    ? `https://${process.env.ARWEAVE_HOST}`
+    : 'https://arweave.net'
+    const response = await fetch(`${gateway}/${txId}`)
 
     console.log('ArLocal response status:', response.status)
     console.log('ArLocal content type:', response.headers.get('content-type'))
