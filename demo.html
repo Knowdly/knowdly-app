@@ -193,7 +193,7 @@
 <script>
   // SHA-256 hash of the password — raw password is never stored here
   const HASH = '7a47b8a3baf9d324b0423f01d81a3a34dbb4bb6425dc6a89b806f7a10ac7c3bb';
-  const DEST  = 'https://knowdly.com/app';   // ← redirect destination after correct password
+  const DEST = `https://knowdly.vercel.app/api/gate?token=${hash}`;   // ← redirect destination after correct password
 
   const pwInput  = document.getElementById('pw');
   const feedback = document.getElementById('feedback');
@@ -225,7 +225,7 @@
       feedback.className = 'feedback ok';
       feedback.textContent = '✓ Access granted — redirecting…';
       btn.textContent = '✓';
-      setTimeout(() => { window.location.href = DEST; }, 900);
+      setTimeout(() => { window.location.href = `https://knowdly.vercel.app/api/gate?token=${hash}`; }, 900);
     } else {
       pwInput.classList.add('error');
       feedback.className = 'feedback err';
