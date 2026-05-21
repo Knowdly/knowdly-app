@@ -52,6 +52,7 @@ async function verifyOwnership(
   walletAddress: string,
   bookId:        number
 ): Promise<boolean> {
+  console.log('verifyOwnership called for wallet:', walletAddress, 'bookId:', bookId)
   try {
     const contract = new Contract(CONTRACT_ID)
     const account  = new Account(walletAddress, '0')
@@ -82,6 +83,7 @@ async function verifyOwnership(
     })
 
     const tokensData = await tokensResponse.json()
+    console.log('getTokensByOwner raw response:', JSON.stringify(tokensData?.result?.error || tokensData?.result?.results?.[0]?.xdr ? 'has XDR' : 'no XDR'))
     const tokensXdr  = tokensData.result?.results?.[0]?.xdr
     if (!tokensXdr) return false
 
