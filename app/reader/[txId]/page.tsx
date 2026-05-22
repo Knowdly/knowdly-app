@@ -1,4 +1,19 @@
 // app/reader/[txId]/page.tsx
+//
+// ── LAST-PAGE MEMORY ──────────────────────────────────────────────────────────
+// Remembers where each reader left off, per book, per wallet.
+// Stored in localStorage keyed by txId + walletAddress.
+//
+// EPUB:  saves the CFI (Canonical Fragment Identifier) string — exact position
+// PDF:   saves the page number
+// TXT:   saves the scroll percentage
+//
+// Storage key format: knowdly_bookmark_<txId>_<walletAddress>
+// Value format:       { cfi?: string, page?: number, pct?: number }
+//
+// On open:  reads the bookmark and restores position
+// On read:  saves position every time the reader moves
+
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -25,9 +40,14 @@ type BookMeta = {
 
 type ReaderStatus = 'loading' | 'ready' | 'error'
 
-// ── Arweave gateway — reads from env var set by Next.js at build time ─────────
-// Dev:        NEXT_PUBLIC_ARWEAVE_GATEWAY=http://localhost:1984
-// Production: NEXT_PUBLIC_ARWEAVE_GATEWAY=https://arweave.net
+// ── Bookmark type ─────────────────────────────────────────────────────────────
+type Bookmark = {
+  cfi?:  string   // EPUB: epubjs CFI string for exact position
+  page?: number   // PDF: page number
+  pct?:  number   // TXT: scroll percentage 0-100
+}
+
+// ── Arweave gateway ───────────────────────────────────────────────────────────
 const ARWEAVE_GATEWAY = process.env.NEXT_PUBLIC_ARWEAVE_GATEWAY ?? 'http://localhost:1984'
 
 // ── EPUB theme ────────────────────────────────────────────────────────────────
@@ -49,6 +69,32 @@ const EPUB_THEME = {
   img: { 'max-width': '100%', height: 'auto' },
 }
 
+// ── Bookmark helpers ──────────────────────────────────────────────────────────
+
+// Returns the localStorage key for a bookmark
+function bookmarkKey(txId: string, walletAddress: string): string {
+  return `knowdly_bookmark_${txId}_${walletAddress}`
+}
+
+// Saves a bookmark to localStorage
+function saveBookmark(txId: string, walletAddress: string, bookmark: Bookmark) {
+  try {
+    localStorage.setItem(bookmarkKey(txId, walletAddress), JSON.stringify(bookmark))
+  } catch { /* localStorage may be unavailable */ }
+}
+
+// Loads a bookmark from localStorage — returns null if none exists
+function loadBookmark(txId: string, walletAddress: string): Bookmark | null {
+  try {
+    const stored = localStorage.getItem(bookmarkKey(txId, walletAddress))
+    return stored ? JSON.parse(stored) : null
+  } catch {
+    return null
+  }
+}
+
+// ── Sandbox patch ─────────────────────────────────────────────────────────────
+
 function patchEpubSandbox(container: HTMLDivElement | null) {
   if (!container) return
   const iframes = container.querySelectorAll('iframe')
@@ -59,6 +105,8 @@ function patchEpubSandbox(container: HTMLDivElement | null) {
     }
   })
 }
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ReaderPage() {
   const params = useParams()
@@ -87,15 +135,35 @@ export default function ReaderPage() {
   const [darkMode, setDarkMode] = useState(true)
   const [progress, setProgress] = useState(0)
 
+  // wallet address — needed for per-wallet bookmark keys
+  const walletAddressRef = useRef<string>('')
+
+  // ── TXT scroll progress tracking ──────────────────────────────────────────
+  // Updates progress state as the user scrolls.
+  // Also saves the bookmark for TXT format.
   useEffect(() => {
     function onScroll() {
       const el    = document.documentElement
       const total = el.scrollHeight - el.clientHeight
-      setProgress(total > 0 ? Math.round((el.scrollTop / total) * 100) : 0)
+      const pct   = total > 0 ? Math.round((el.scrollTop / total) * 100) : 0
+      setProgress(pct)
+
+      // save TXT scroll position as bookmark
+      if (walletAddressRef.current && txId) {
+        saveBookmark(txId, walletAddressRef.current, { pct })
+      }
     }
     window.addEventListener('scroll', onScroll)
     return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+  }, [txId])
+
+  // ── PDF page number tracking ───────────────────────────────────────────────
+  // Saves bookmark whenever the PDF page changes
+  useEffect(() => {
+    if (walletAddressRef.current && txId && pageNum > 1) {
+      saveBookmark(txId, walletAddressRef.current, { page: pageNum })
+    }
+  }, [pageNum, txId])
 
   useEffect(() => {
     return () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl) }
@@ -140,7 +208,6 @@ export default function ReaderPage() {
       const mime = found?.contentMime ?? 'application/pdf'
 
       // Step 2: fetch encrypted content
-      // Uses NEXT_PUBLIC_ARWEAVE_GATEWAY — localhost:1984 in dev, arweave.net in prod
       setLoadingMsg('Downloading encrypted content...')
       const contentRes = await fetch(`/api/content/${txId}`)
       if (!contentRes.ok) throw new Error('Could not fetch content: ' + contentRes.status)
@@ -152,6 +219,9 @@ export default function ReaderPage() {
       const { requestAccess } = await import('@stellar/freighter-api')
       const accessResult = await requestAccess()
       if (accessResult.error) throw new Error('Please connect your Freighter wallet')
+
+      // store wallet address for bookmark keys
+      walletAddressRef.current = accessResult.address
 
       // Step 4: verify ownership + get key
       setLoadingMsg('Verifying ownership...')
@@ -170,6 +240,12 @@ export default function ReaderPage() {
       const decryptedData = await decryptFile(encryptedBuffer, aesKey, iv)
       console.log('Decrypted size:', decryptedData.byteLength)
 
+      // load any existing bookmark for this book + wallet
+      const bookmark = loadBookmark(txId, accessResult.address)
+      if (bookmark) {
+        console.log('Bookmark found:', bookmark)
+      }
+
       // Step 6: render
       const fmt = format as string
 
@@ -185,9 +261,9 @@ export default function ReaderPage() {
         epubBookRef.current = book
 
         const rendition = book.renderTo(epubContainerRef.current, {
-          width:  '100%',
-          height: '100%',
-          flow:   'paginated',
+          width:                '100%',
+          height:               '100%',
+          flow:                 'paginated',
           spread:               'none',
           allowScriptedContent: true,
         })
@@ -206,18 +282,50 @@ export default function ReaderPage() {
         rendition.on('relocated', (location: any) => {
           setEpubAtStart(!!location.atStart)
           setEpubAtEnd(!!location.atEnd)
+
+          // save EPUB bookmark — CFI string is the exact position in the book
+          // epubjs CFI looks like: epubcfi(/6/4[chap01ref]!/4[body01]/10[para05]/2/1:3)
+          if (location?.start?.cfi && walletAddressRef.current) {
+            saveBookmark(txId, walletAddressRef.current, { cfi: location.start.cfi })
+          }
         })
 
-        await rendition.display()
+        // restore EPUB bookmark if one exists — display at saved CFI position
+        // otherwise start from the beginning
+        if (bookmark?.cfi) {
+          console.log('Restoring EPUB position:', bookmark.cfi)
+          await rendition.display(bookmark.cfi)
+        } else {
+          await rendition.display()
+        }
+
         setEpubReady(true)
 
       } else if (fmt === 'TXT') {
         setTextBody(new TextDecoder().decode(decryptedData))
         setStatus('ready')
 
+        // restore TXT scroll position after content renders
+        if (bookmark?.pct && bookmark.pct > 0) {
+          console.log('Restoring TXT scroll position:', bookmark.pct + '%')
+          setTimeout(() => {
+            const el    = document.documentElement
+            const total = el.scrollHeight - el.clientHeight
+            el.scrollTop = Math.round((bookmark.pct! / 100) * total)
+          }, 200) // wait for content to render before scrolling
+        }
+
       } else {
+        // PDF
         const blob = new Blob([decryptedData], { type: mime })
         setPdfUrl(URL.createObjectURL(blob))
+
+        // restore PDF page number if bookmark exists
+        if (bookmark?.page && bookmark.page > 1) {
+          console.log('Restoring PDF page:', bookmark.page)
+          setPageNum(bookmark.page)
+        }
+
         setStatus('ready')
       }
 
