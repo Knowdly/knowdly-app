@@ -80,6 +80,7 @@ export default function ResaleModal({ listing, onClose, onSuccess }: Props) {
   // ── Purchase handler ──────────────────────────────────────────────────────
 
   async function handlePurchase() {
+    console.log('handlePurchase started, listing:', listing.book_id, listing.token_id)
     setStatus('connecting')
     setError(null)
     setStep('Connecting wallet...')
@@ -131,6 +132,7 @@ export default function ResaleModal({ listing, onClose, onSuccess }: Props) {
       // TODO: add publisher_address to books table in Supabase
       // For now use a direct contract lookup
       const publisherAddress = await getPublisherAddress(listing.book_id)
+      console.log('publisherAddress:', publisherAddress)
 
       if (!publisherAddress) throw new Error('Could not find creator wallet for royalty payment')
 
