@@ -106,6 +106,8 @@ export default function ResaleModal({ listing, onClose, onSuccess }: Props) {
       const accountRes = await fetch(`${HORIZON_URL}/accounts/${buyerAddress}`)
       if (!accountRes.ok) throw new Error('Could not load your wallet. Make sure Freighter is set to Testnet.')
       const accountData = await accountRes.json()
+    console.log('accountData.sequence:', accountData.sequence)
+    console.log('accountData.id:', accountData.id)
 
       const usdcBalance = accountData.balances?.find(
         (b: any) => b.asset_code === 'USDC' && b.asset_issuer === USDC_ISSUER
