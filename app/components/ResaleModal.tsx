@@ -90,9 +90,10 @@ export default function ResaleModal({ listing, onClose, onSuccess }: Props) {
       // ── Step 1: Connect wallet ────────────────────────────────────────────
       const { requestAccess } = await import('@stellar/freighter-api')
       const accessResult = await requestAccess()
+      console.log('accessResult:', accessResult)
       if (accessResult.error) throw new Error('Please connect your Freighter wallet')
       const buyerAddress = accessResult.address
-
+      console.log('buyerAddress:', buyerAddress)
       // prevent buying your own listing
       if (buyerAddress === listing.seller_address) {
         throw new Error('You cannot buy your own listing')
