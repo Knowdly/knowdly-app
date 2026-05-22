@@ -634,3 +634,56 @@ export async function buyListing(
   await simulateAndSubmit(transaction)
   console.log(`Token ${tokenId} transferred to ${buyerAddress} via buy_listing`)
 }
+
+export async function listForSale(
+  sellerAddress: string,
+  tokenId:       number,
+  askingPrice:   number,
+): Promise<void> {
+  const account  = await loadAccount(sellerAddress)
+  const contract = new Contract(CONTRACT_ID)
+
+  const transaction = new TransactionBuilder(account, {
+    fee:               BASE_FEE,
+    networkPassphrase: NETWORK,
+  })
+    .addOperation(
+      contract.call(
+        'list_for_sale',
+        nativeToScVal(sellerAddress,         { type: 'address' }),
+        nativeToScVal(BigInt(tokenId),       { type: 'u64' }),
+        nativeToScVal(BigInt(askingPrice),   { type: 'i128' }),
+      )
+    )
+    .setTimeout(30)
+    .build()
+
+  await simulateAndSubmit(transaction)
+  console.log(`Token ${tokenId} listed for sale at ${askingPrice} stroops`)
+}
+
+// ── cancelListing ───────────────────────────────────────────────────────────
+export async function cancelListing(
+  sellerAddress: string,
+  tokenId:       number,
+): Promise<void> {
+  const account  = await loadAccount(sellerAddress)
+  const contract = new Contract(CONTRACT_ID)
+
+  const transaction = new TransactionBuilder(account, {
+    fee:               BASE_FEE,
+    networkPassphrase: NETWORK,
+  })
+    .addOperation(
+      contract.call(
+        'cancel_listing',
+        nativeToScVal(sellerAddress,   { type: 'address' }),
+        nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      )
+    )
+    .setTimeout(30)
+    .build()
+
+  await simulateAndSubmit(transaction)
+  console.log(`Listing cancelled for token ${tokenId}`)
+}

@@ -175,74 +175,87 @@ export default function MyLibraryPage() {
   // ── List a book for resale ────────────────────────────────────────────────
 
   async function handleList() {
-    if (!listingBook || !listingPrice || !walletAddress) return
-    const price = parseFloat(listingPrice)
-    if (isNaN(price) || price <= 0) {
-      setListingError('Please enter a valid price')
-      return
-    }
-
-    setListingStatus('listing')
-    setListingError(null)
-
-    try {
-      const res = await fetch('/api/listings', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          tokenId:       listingBook.tokenId,
-          bookId:        listingBook.bookId,
-          arweaveTxId:   listingBook.arweaveTxId,
-          sellerAddress: walletAddress,
-          askingPrice:   price,
-        }),
-      })
-
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || 'Failed to create listing')
-      }
-
-      setListingStatus('done')
-
-      // update local state
-      setOwnedBooks(prev => prev.map(b =>
-        b.tokenId === listingBook.tokenId
-          ? { ...b, isListed: true, listingPrice: String(price) }
-          : b
-      ))
-
-      setTimeout(() => {
-        setListingBook(null)
-        setListingPrice('')
-        setListingStatus('idle')
-      }, 1500)
-
-    } catch (err) {
-      setListingError(err instanceof Error ? err.message : 'Failed to list book')
-      setListingStatus('error')
-    }
+  if (!listingBook || !listingPrice || !walletAddress) return
+  const price = parseFloat(listingPrice)
+  if (isNaN(price) || price <= 0) {
+    setListingError('Please enter a valid price')
+    return
   }
+
+  setListingStatus('listing')
+  setListingError(null)
+
+  try {
+    // ── Step 1: List on Soroban contract ──────────────────────────────
+    // This is the on-chain listing — buy_listing requires this to exist
+    setListingError(null)
+    const { listForSale } = await import('../lib/contract')
+    const askingPriceStroops = Math.round(price * 10_000_000)
+    await listForSale(walletAddress, listingBook.tokenId, askingPriceStroops)
+    console.log('Token listed on-chain:', listingBook.tokenId)
+
+    // ── Step 2: Save listing to Supabase (fast index) ─────────────────
+    const res = await fetch('/api/listings', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        tokenId:       listingBook.tokenId,
+        bookId:        listingBook.bookId,
+        arweaveTxId:   listingBook.arweaveTxId,
+        sellerAddress: walletAddress,
+        askingPrice:   price,
+      }),
+    })
+
+    if (!res.ok) {
+      const data = await res.json()
+      throw new Error(data.error || 'Failed to create listing')
+    }
+
+    setListingStatus('done')
+    setOwnedBooks(prev => prev.map(b =>
+      b.tokenId === listingBook.tokenId
+        ? { ...b, isListed: true, listingPrice: String(price) }
+        : b
+    ))
+
+    setTimeout(() => {
+      setListingBook(null)
+      setListingPrice('')
+      setListingStatus('idle')
+    }, 1500)
+
+  } catch (err) {
+    setListingError(err instanceof Error ? err.message : 'Failed to list book')
+    setListingStatus('error')
+  }
+}
 
   // ── Cancel a listing ──────────────────────────────────────────────────────
 
   async function handleCancel(tokenId: number) {
-    setCancellingId(tokenId)
-    try {
-      const res = await fetch(`/api/listings?tokenId=${tokenId}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Failed to cancel listing')
+  setCancellingId(tokenId)
+  try {
+    // ── Step 1: Cancel on Soroban contract ────────────────────────────
+    const { cancelListing } = await import('../lib/contract')
+    await cancelListing(walletAddress!, tokenId)
+    console.log('Listing cancelled on-chain:', tokenId)
 
-      setOwnedBooks(prev => prev.map(b =>
-        b.tokenId === tokenId
-          ? { ...b, isListed: false, listingPrice: '' }
-          : b
-      ))
-    } catch (err) {
-      console.error('Cancel listing error:', err)
-    } finally {
-      setCancellingId(null)
-    }
+    // ── Step 2: Remove from Supabase ──────────────────────────────────
+    const res = await fetch(`/api/listings?tokenId=${tokenId}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error('Failed to cancel listing')
+
+    setOwnedBooks(prev => prev.map(b =>
+      b.tokenId === tokenId
+        ? { ...b, isListed: false, listingPrice: '' }
+        : b
+    ))
+  } catch (err) {
+    console.error('Cancel listing error:', err)
+  } finally {
+    setCancellingId(null)
   }
+}
 
   // ── Render ────────────────────────────────────────────────────────────────
 
