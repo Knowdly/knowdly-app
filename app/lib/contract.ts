@@ -577,10 +577,11 @@ export async function getBookArweaveTxId(
 
 export async function getPublisherAddress(
   bookId: number,
+  callerAddress: string,
 ): Promise<string | null> {
   const contract = new Contract(CONTRACT_ID)
   // use a dummy account for simulation — we just need to read data
-  const account = new Account('GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN', '0')
+  const account = new Account(callerAddress, '0')
 
   const transaction = new TransactionBuilder(account, {
     fee:               BASE_FEE,
