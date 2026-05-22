@@ -152,6 +152,7 @@ export default function ResaleModal({ listing, onClose, onSuccess }: Props) {
       //   1. seller gets their share
       //   2. creator gets their royalty
       //   3. platform gets its fee
+      console.log('Building tx with:', buyerAddress, accountData.sequence)
       const tx = new TransactionBuilder(
         new Account(buyerAddress, buyerAccount.sequence),
         { fee: BASE_FEE, networkPassphrase: NETWORK }
