@@ -609,3 +609,28 @@ export async function getPublisherAddress(
     return null
   }
 }
+
+export async function buyListing(
+  buyerAddress: string,
+  tokenId:      number,
+): Promise<void> {
+  const account  = await loadAccount(buyerAddress)
+  const contract = new Contract(CONTRACT_ID)
+
+  const transaction = new TransactionBuilder(account, {
+    fee:               BASE_FEE,
+    networkPassphrase: NETWORK,
+  })
+    .addOperation(
+      contract.call(
+        'buy_listing',
+        nativeToScVal(buyerAddress,    { type: 'address' }),
+        nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      )
+    )
+    .setTimeout(30)
+    .build()
+
+  await simulateAndSubmit(transaction)
+  console.log(`Token ${tokenId} transferred to ${buyerAddress} via buy_listing`)
+}

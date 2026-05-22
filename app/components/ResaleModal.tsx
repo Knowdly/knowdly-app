@@ -206,7 +206,7 @@ export default function ResaleModal({ listing, onClose, onSuccess }: Props) {
       setStep('Transferring ownership on-chain — please approve in Freighter...')
 
       const salePriceStroops = Math.round(price * 10_000_000)
-      await transferToken(buyerAddress, listing.token_id, salePriceStroops)
+      await buyListing(buyerAddress, listing.token_id)
 
       console.log('NFT transferred to buyer:', buyerAddress)
 
