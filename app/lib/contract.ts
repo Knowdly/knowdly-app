@@ -264,6 +264,50 @@ export async function updateArweaveTx(
   console.log('Arweave TX ID updated on-chain for book', bookId, '→', arweaveTxId)
 }
 
+// ── transferToken ─────────────────────────────────────────────────────────────
+// Called when a resale purchase completes.
+// Transfers NFT ownership from seller to buyer on the Soroban contract.
+// The contract automatically:
+//   - Pays the creator their royalty (royalty_bps % of sale price)
+//   - Pays the platform its fee (platform_fee_bps % of sale price)
+//   - Pays the seller the remainder
+//   - Removes the token from the seller's OwnerTokens list
+//   - Adds the token to the buyer's OwnerTokens list
+//   - Updates the Ownership records for both wallets
+//   - Emits a transfer event (permanent on-chain record of the resale)
+//
+// Parameters:
+//   buyerAddress  — the wallet buying the book (signs the transaction)
+//   tokenId       — the NFT token ID being transferred
+//   salePrice     — the resale price in stroops (1 USDC = 10_000_000 stroops)
+
+export async function transferToken(
+  buyerAddress: string,
+  tokenId:      number,
+  salePrice:    number,
+): Promise<void> {
+  const account  = await loadAccount(buyerAddress)
+  const contract = new Contract(CONTRACT_ID)
+
+  const transaction = new TransactionBuilder(account, {
+    fee:               BASE_FEE,
+    networkPassphrase: NETWORK,
+  })
+    .addOperation(
+      contract.call(
+        'transfer_token',
+        nativeToScVal(BigInt(tokenId),  { type: 'u64' }),
+        nativeToScVal(buyerAddress,     { type: 'address' }),
+        nativeToScVal(BigInt(salePrice),{ type: 'i128' }),
+      )
+    )
+    .setTimeout(30)
+    .build()
+
+  await simulateAndSubmit(transaction)
+  console.log(`Token ${tokenId} transferred to ${buyerAddress} for ${salePrice} stroops`)
+}
+
 // ── getTotalBooks ─────────────────────────────────────────────────────────────
 
 export async function getTotalBooks(callerAddress: string): Promise<number> {
@@ -522,6 +566,44 @@ export async function getBookArweaveTxId(
     const scVal  = xdr.ScVal.fromXDR(returnVal, 'base64')
     const native = scValToNative(scVal) as any
     return native?.arweave_tx_id ?? null
+  } catch {
+    return null
+  }
+}
+
+// ── getPublisherAddress ───────────────────────────────────────────────────────
+// Returns the publisher (creator) wallet address for a given bookId.
+// Used by the resale modal to send royalty payments to the correct wallet.
+
+export async function getPublisherAddress(
+  bookId: number,
+): Promise<string | null> {
+  const contract = new Contract(CONTRACT_ID)
+  // use a dummy account for simulation — we just need to read data
+  const account  = new Account(CONTRACT_ID, '0')
+
+  const transaction = new TransactionBuilder(account, {
+    fee:               BASE_FEE,
+    networkPassphrase: NETWORK,
+  })
+    .addOperation(
+      contract.call(
+        'get_book',
+        nativeToScVal(BigInt(bookId), { type: 'u64' }),
+      )
+    )
+    .setTimeout(30)
+    .build()
+
+  const simData = await simulateOnly(transaction)
+  if (simData.result?.error) return null
+
+  try {
+    const returnVal = simData.result?.results?.[0]?.xdr
+    if (!returnVal) return null
+    const scVal  = xdr.ScVal.fromXDR(returnVal, 'base64')
+    const native = scValToNative(scVal) as any
+    return native?.publisher ?? null
   } catch {
     return null
   }
