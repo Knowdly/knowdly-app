@@ -396,6 +396,22 @@ export default function UploadPage() {
       }
       setProgress(90)
 
+      // ── Update soroban_book_id in Supabase ─────────────────────────────────
+      // Keeps the Supabase cache in sync with the on-chain bookId
+      // Used by the purchase modal to resolve bookId on other devices
+      try {
+        await fetch('/api/books/setbookid', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ arweaveTxId, bookId }),
+        })
+        console.log('Supabase soroban_book_id updated:', bookId)
+      } catch (err) {
+        console.error('Could not update soroban_book_id in Supabase (non-fatal):', err)
+      }
+
+      setProgress(100)
+
       // ── Step 8: Store the encryption key on the key server ─────────────────
       setStep('Storing encryption key...')
       const keyRes = await fetch('/api/keys', {
