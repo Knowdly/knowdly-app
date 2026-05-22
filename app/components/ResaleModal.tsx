@@ -134,6 +134,7 @@ export default function ResaleModal({ listing, onClose, onSuccess }: Props) {
       // for now fetch from the books API which has creator info
       // TODO: add publisher_address to books table in Supabase
       // For now use a direct contract lookup
+      console.log('Calling getPublisherAddress with bookId:', listing.book_id)
       const publisherAddress = await getPublisherAddress(listing.book_id)
       console.log('publisherAddress:', publisherAddress)
 
