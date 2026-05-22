@@ -25,7 +25,7 @@ import { signTransaction } from '@stellar/freighter-api'
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-export const CONTRACT_ID = 'CAHXGGN2SCRT5ULEXCMEJMSSVXBA4KF3K4Z2XMZPWFU3NFQDGSYKDQ73'
+export const CONTRACT_ID = 'CBSEVXLOG72CW6L77J6HGRSMKI3IXKLKQTPPMLQS65NNHGGNXGOXMXAA'
 
 const HORIZON_URL = 'https://horizon-testnet.stellar.org'
 const RPC_URL     = 'https://soroban-testnet.stellar.org'
