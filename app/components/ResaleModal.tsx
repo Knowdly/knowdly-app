@@ -28,7 +28,7 @@ import {
   Account,
   Memo,
 } from '@stellar/stellar-sdk'
-import { transferToken, getPublisherAddress } from '../lib/contract'
+import { transferToken, getPublisherAddress, buyListing } from '../lib/contract'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
