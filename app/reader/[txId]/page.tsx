@@ -189,7 +189,6 @@ export default function ReaderPage() {
           height: '100%',
           flow:   'paginated',
           allowScriptedContent: true,
-          script:               'dangerouslyAllowScripts',
           manager:              'continuous',
         })
         epubRenditionRef.current = rendition
