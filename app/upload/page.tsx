@@ -410,8 +410,6 @@ export default function UploadPage() {
         console.error('Could not update soroban_book_id in Supabase (non-fatal):', err)
       }
 
-      setProgress(100)
-
       // ── Step 8: Store the encryption key on the key server ─────────────────
       setStep('Storing encryption key...')
       const keyRes = await fetch('/api/keys', {
