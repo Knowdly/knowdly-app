@@ -1,753 +1,490 @@
-// app/upload/page.tsx
+// app/reader/[txId]/page.tsx
 //
-// ── OVERVIEW ──────────────────────────────────────────────────────────────────
-// This is the creator upload page. It allows a creator (publisher) to upload
-// a book (PDF, EPUB, or TXT) to the Knowdly platform.
+// ── LAST-PAGE MEMORY ──────────────────────────────────────────────────────────
+// Remembers where each reader left off, per book, per wallet.
+// Stored in localStorage keyed by txId + walletAddress.
 //
-// ── SECURITY MODEL ────────────────────────────────────────────────────────────
-// The file is encrypted in the browser using AES-256-GCM before anything
-// is sent to any server. The plaintext never leaves the creator's device.
-// Only the encrypted blob is uploaded to Arweave. The AES key is stored
-// on the Supabase key server, gated by on-chain NFT ownership verification.
+// EPUB:  saves the CFI (Canonical Fragment Identifier) string — exact position
+// PDF:   saves the page number
+// TXT:   saves the scroll percentage
 //
-// ── ATOMIC UPLOAD FLOW ────────────────────────────────────────────────────────
-// The flow is designed to be atomic — if the creator cancels or any step
-// fails, we don't end up with orphaned payments or uploaded files.
+// Storage key format: knowdly_bookmark_<txId>_<walletAddress>
+// Value format:       { cfi?: string, page?: number, pct?: number }
 //
-// Step 1:  Connect Freighter wallet
-//          → If cancelled here, nothing has happened. Clean abort.
-//
-// Step 2:  Encrypt the book file in the browser
-//          → AES-256-GCM encryption. IV is random per upload.
-//          → Plaintext never leaves the device.
-//
-// Step 3:  Build + sign the Stellar/Soroban transaction in Freighter
-//          → Uses a placeholder Arweave TX ID since the real one doesn't
-//            exist yet (we haven't uploaded to Arweave yet).
-//          → If the creator cancels Freighter here, nothing has been uploaded.
-//
-// Step 4:  Upload cover image to Arweave (if provided)
-//          → Cover images are PUBLIC (not encrypted) — they're meant to be seen.
-//          → Uploaded as a separate Arweave transaction.
-//          → Non-fatal: if cover upload fails, book upload continues.
-//
-// Step 5:  Upload encrypted book file to Arweave
-//          → Chunked upload handles files of any size.
-//          → Cover TX ID is included as an Arweave tag if provided.
-//
-// Step 6:  Store the AES encryption key on the Supabase key server
-//          → Key is stored against the Arweave TX ID.
-//          → Key is only released when on-chain NFT ownership is verified.
-//
-// Step 7:  Submit the signed Stellar transaction
-//          → Registers the book on the Soroban smart contract.
-//          → Mints the creator's record on-chain.
-//
-// Step 8:  Update the Arweave TX ID on-chain
-//          → Replaces the placeholder TX ID with the real one.
-//          → This is what makes ownership → content mapping fully on-chain.
-//          → Non-fatal: if this fails, the book is still uploaded and registered.
+// On open:  reads the bookmark and restores position
+// On read:  saves position every time the reader moves
 
 'use client'
 
-import { useState, useRef } from 'react'
-import {
-  buildAndSignRegisterBook,   // builds + signs the Soroban register_book tx
-  submitSignedTransaction,    // submits the signed tx to Stellar
-  getTotalBooks,              // reads total book count from contract (to get bookId)
-  updateArweaveTx,            // updates the on-chain arweave_tx_id after upload
-} from '../lib/contract'
-import { requestAccess } from '@stellar/freighter-api'
-import {
-  generateKey,   // generates a random AES-256-GCM key
-  exportKey,     // exports the key as a hex string for storage
-  encryptFile,   // encrypts the file buffer, returns { encryptedData, iv }
-} from '../lib/crypto'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import { importKey, decryptFile } from '../lib/crypto'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+type ContentFormat = 'PDF' | 'EPUB' | 'TXT'
 
-type UploadStatus = 'idle' | 'uploading' | 'done' | 'error'
-type ContentFormat = 'PDF' | 'EPUB' | 'TXT' | null
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-// MIME type map — used when sending file metadata to the upload API
-const MIME_TYPES: Record<string, string> = {
-  PDF:  'application/pdf',
-  EPUB: 'application/epub+zip',
-  TXT:  'text/plain',
+type BookMeta = {
+  txId:          string
+  title:         string
+  author:        string
+  isbn:          string
+  edition:       string
+  description:   string
+  price:         string
+  royalty:       string
+  fileName:      string
+  contentType:   string
+  contentFormat: ContentFormat
+  contentMime:   string
+  category:      string
 }
 
-// Book categories shown in the dropdown
-const CATEGORIES = [
-  'Textbook', 'Novel', 'Research Paper',
-  'Essay Collection', 'Course Notes', 'Reference', 'Other',
-]
+type ReaderStatus = 'loading' | 'ready' | 'error'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-// Returns the MIME type string for a given content format
-function getMimeType(format: ContentFormat): string {
-  if (!format) return 'application/octet-stream'
-  return MIME_TYPES[format] ?? 'application/octet-stream'
+// ── Bookmark type ─────────────────────────────────────────────────────────────
+type Bookmark = {
+  cfi?:  string   // EPUB: epubjs CFI string for exact position
+  page?: number   // PDF: page number
+  pct?:  number   // TXT: scroll percentage 0-100
 }
 
-// Detects the content format from a file's name or MIME type.
-// Used to auto-populate the format field when a file is selected.
-function detectFormat(file: File): ContentFormat {
-  const name = file.name.toLowerCase()
-  if (name.endsWith('.epub'))                return 'EPUB'
-  if (name.endsWith('.pdf'))                 return 'PDF'
-  if (name.endsWith('.txt'))                 return 'TXT'
-  if (file.type === 'application/pdf')       return 'PDF'
-  if (file.type === 'application/epub+zip')  return 'EPUB'
-  if (file.type === 'text/plain')            return 'TXT'
-  return null
+// ── Arweave gateway ───────────────────────────────────────────────────────────
+const ARWEAVE_GATEWAY = process.env.NEXT_PUBLIC_ARWEAVE_GATEWAY ?? 'http://localhost:1984'
+
+// ── EPUB theme ────────────────────────────────────────────────────────────────
+const EPUB_THEME = {
+  body: {
+    background:    '#fafaf8',
+    color:         '#1a1a1a',
+    'font-family': 'Georgia, "Times New Roman", serif',
+    'font-size':   '1.05rem',
+    'line-height': '1.75',
+    padding:       '1rem 2rem',
+    margin:        '0',
+  },
+  p:   { margin: '0 0 1em 0' },
+  a:   { color: '#4f46e5' },
+  h1:  { color: '#111', 'font-size': '1.6rem',  margin: '1.5rem 0 1rem' },
+  h2:  { color: '#111', 'font-size': '1.3rem',  margin: '1.25rem 0 0.75rem' },
+  h3:  { color: '#111', 'font-size': '1.1rem',  margin: '1rem 0 0.5rem' },
+  img: { 'max-width': '100%', height: 'auto' },
+}
+
+// ── Bookmark helpers ──────────────────────────────────────────────────────────
+
+// Returns the localStorage key for a bookmark
+function bookmarkKey(txId: string, walletAddress: string): string {
+  return `knowdly_bookmark_${txId}_${walletAddress}`
+}
+
+// Saves a bookmark to localStorage
+function saveBookmark(txId: string, walletAddress: string, bookmark: Bookmark) {
+  try {
+    localStorage.setItem(bookmarkKey(txId, walletAddress), JSON.stringify(bookmark))
+  } catch { /* localStorage may be unavailable */ }
+}
+
+// Loads a bookmark from localStorage — returns null if none exists
+function loadBookmark(txId: string, walletAddress: string): Bookmark | null {
+  try {
+    const stored = localStorage.getItem(bookmarkKey(txId, walletAddress))
+    return stored ? JSON.parse(stored) : null
+  } catch {
+    return null
+  }
+}
+
+// ── Sandbox patch ─────────────────────────────────────────────────────────────
+
+function patchEpubSandbox(container: HTMLDivElement | null) {
+  if (!container) return
+  const iframes = container.querySelectorAll('iframe')
+  iframes.forEach(iframe => {
+    const existing = iframe.getAttribute('sandbox') ?? ''
+    if (!existing.includes('allow-scripts')) {
+      iframe.setAttribute('sandbox', (existing + ' allow-scripts allow-same-origin').trim())
+    }
+  })
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function UploadPage() {
+export default function ReaderPage() {
+  const params = useParams()
+  const router = useRouter()
+  const txId   = params.txId as string
 
-  // ── Form state ─────────────────────────────────────────────────────────────
-  // These are the metadata fields the creator fills in before uploading.
-  const [file,        setFile]        = useState<File | null>(null)   // the book file
-  const [format,      setFormat]      = useState<ContentFormat>(null) // PDF | EPUB | TXT
-  const [title,       setTitle]       = useState('')
-  const [author,      setAuthor]      = useState('')
-  const [isbn,        setIsbn]        = useState('')
-  const [edition,     setEdition]     = useState('')
-  const [description, setDescription] = useState('')
-  const [category,    setCategory]    = useState('')
-  const [price,       setPrice]       = useState('')                  // in USD
-  const [royalty,     setRoyalty]     = useState('5')                 // resale royalty %
+  const [status,     setStatus]     = useState<ReaderStatus>('loading')
+  const [meta,       setMeta]       = useState<BookMeta | null>(null)
+  const [error,      setError]      = useState<string | null>(null)
+  const [loadingMsg, setLoadingMsg] = useState('Loading book...')
 
-  // ── Cover image state ──────────────────────────────────────────────────────
-  // Cover images are optional. If provided they are uploaded to Arweave as a
-  // separate public (unencrypted) transaction. The TX ID is stored as an
-  // Arweave tag on the book transaction and in Supabase as cover_tx_id.
-  const [coverFile,    setCoverFile]    = useState<File | null>(null)
-  const [coverPreview, setCoverPreview] = useState<string | null>(null) // base64 data URL for preview
-  const coverInputRef = useRef<HTMLInputElement>(null)                  // ref to hidden file input
+  const [pdfUrl,   setPdfUrl]   = useState<string | null>(null)
+  const [textBody, setTextBody] = useState<string | null>(null)
+  const [numPages, setNumPages] = useState(0)
+  const [pageNum,  setPageNum]  = useState(1)
 
-  // ── Upload state ───────────────────────────────────────────────────────────
-  const [status,    setStatus]    = useState<UploadStatus>('idle')
-  const [step,      setStep]      = useState('')         // human-readable progress message
-  const [progress,  setProgress]  = useState(0)          // 0-100 progress bar value
-  const [txId,      setTxId]      = useState<string | null>(null)      // Arweave TX ID of book
-  const [coverTxId, setCoverTxId] = useState<string | null>(null)      // Arweave TX ID of cover
-  const [error,     setError]     = useState<string | null>(null)
+  const epubContainerRef = useRef<HTMLDivElement>(null)
+  const epubBookRef      = useRef<any>(null)
+  const epubRenditionRef = useRef<any>(null)
+  const [epubReady,   setEpubReady]   = useState(false)
+  const [epubChapter, setEpubChapter] = useState('')
+  const [epubAtStart, setEpubAtStart] = useState(true)
+  const [epubAtEnd,   setEpubAtEnd]   = useState(false)
 
-  // ── File selection handler ─────────────────────────────────────────────────
+  const [fontSize, setFontSize] = useState(18)
+  const [darkMode, setDarkMode] = useState(true)
+  const [progress, setProgress] = useState(0)
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const selected = e.target.files?.[0]
-    if (!selected) return
-    setFile(selected)
-    setFormat(detectFormat(selected))  // auto-detect PDF/EPUB/TXT
-    setStatus('idle')
-    setTxId(null)
-    setError(null)
-  }
+  // wallet address — needed for per-wallet bookmark keys
+  const walletAddressRef = useRef<string>('')
 
-  // ── Cover image selection handler ──────────────────────────────────────────
+  // ── TXT scroll progress tracking ──────────────────────────────────────────
+  // Updates progress state as the user scrolls.
+  // Also saves the bookmark for TXT format.
+  useEffect(() => {
+    function onScroll() {
+      const el    = document.documentElement
+      const total = el.scrollHeight - el.clientHeight
+      const pct   = total > 0 ? Math.round((el.scrollTop / total) * 100) : 0
+      setProgress(pct)
 
-  function handleCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const selected = e.target.files?.[0]
-    if (!selected) return
-
-    // validate that the file is an image
-    if (!selected.type.startsWith('image/')) {
-      setError('Cover must be an image file (JPG, PNG, WebP)')
-      return
+      // save TXT scroll position as bookmark
+      if (walletAddressRef.current && txId) {
+        saveBookmark(txId, walletAddressRef.current, { pct })
+      }
     }
+    window.addEventListener('scroll', onScroll)
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [txId])
 
-    // validate file size — covers should be small for fast loading
-    if (selected.size > 2 * 1024 * 1024) {
-      setError('Cover image must be under 2MB')
-      return
+  // ── PDF page number tracking ───────────────────────────────────────────────
+  // Saves bookmark whenever the PDF page changes
+  useEffect(() => {
+    if (walletAddressRef.current && txId && pageNum > 1) {
+      saveBookmark(txId, walletAddressRef.current, { page: pageNum })
     }
+  }, [pageNum, txId])
 
-    setCoverFile(selected)
+  useEffect(() => {
+    return () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl) }
+  }, [pdfUrl])
+
+  useEffect(() => {
+    return () => {
+      try { epubRenditionRef.current?.destroy() } catch {}
+      try { epubBookRef.current?.destroy()      } catch {}
+    }
+  }, [])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!epubReady) return
+      if (e.key === 'ArrowRight') epubRenditionRef.current?.next()
+      if (e.key === 'ArrowLeft')  epubRenditionRef.current?.prev()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [epubReady])
+
+  const fetchBook = useCallback(async () => {
+    setStatus('loading')
     setError(null)
+    setEpubReady(false)
+    setPdfUrl(null)
+    setTextBody(null)
+    setEpubChapter('')
 
-    // generate a base64 data URL for the preview thumbnail
-    // FileReader is used here because we need a preview without uploading
-    const reader = new FileReader()
-    reader.onload = e => setCoverPreview(e.target?.result as string)
-    reader.readAsDataURL(selected)
-  }
-
-  // Clears the cover image selection and resets the file input
-  function removeCover() {
-    setCoverFile(null)
-    setCoverPreview(null)
-    if (coverInputRef.current) coverInputRef.current.value = ''
-  }
-
-  // ── Form validation ────────────────────────────────────────────────────────
-  // Upload button is disabled unless all required fields are filled.
-  // Cover image is optional.
-  function isFormValid() {
-    return (
-      file !== null &&
-      format !== null &&
-      title.trim() !== '' &&
-      author.trim() !== '' &&
-      category !== '' &&
-      price.trim() !== '' &&
-      parseFloat(price) > 0
-    )
-  }
-
-  // ── Reset form ─────────────────────────────────────────────────────────────
-  // Called after a successful upload or when the creator clicks "Upload another"
-  function resetForm() {
-    setFile(null); setFormat(null); setTitle(''); setAuthor('')
-    setIsbn(''); setEdition(''); setDescription(''); setCategory('')
-    setPrice(''); setRoyalty('5'); setStatus('idle')
-    setTxId(null); setCoverTxId(null); setProgress(0); setStep(''); setError(null)
-    setCoverFile(null); setCoverPreview(null)
-    if (coverInputRef.current) coverInputRef.current.value = ''
-  }
-
-  // ── Main upload handler ────────────────────────────────────────────────────
-  // This is the core of the upload flow. See the ATOMIC UPLOAD FLOW comment
-  // at the top of the file for the full sequence.
-  async function handleUpload() {
-    if (!isFormValid() || !file || !format) return
-
-    setStatus('uploading')
-    setError(null)
-    setTxId(null)
-    setCoverTxId(null)
-    setProgress(0)
+    try { epubRenditionRef.current?.destroy(); epubRenditionRef.current = null } catch {}
+    try { epubBookRef.current?.destroy();      epubBookRef.current = null      } catch {}
 
     try {
+      // Step 1: metadata
+      setLoadingMsg('Fetching book metadata...')
+      const metaRes  = await fetch('/api/books')
+      const metaData = await metaRes.json()
+      const found: BookMeta | null = metaData.books?.find((b: BookMeta) => b.txId === txId) ?? null
+      setMeta(found)
+      const format: ContentFormat = found?.contentFormat ?? 'PDF'
+      const mime = found?.contentMime ?? 'application/pdf'
 
-      // ── Step 1: Connect Freighter wallet ───────────────────────────────
-      // We connect the wallet FIRST before doing anything else.
-      // If the creator doesn't have Freighter or cancels, we abort immediately.
-      setStep('Connecting wallet...')
+      // Step 2: fetch encrypted content
+      setLoadingMsg('Downloading encrypted content...')
+      const contentRes = await fetch(`/api/content/${txId}`)
+      if (!contentRes.ok) throw new Error('Could not fetch content: ' + contentRes.status)
+      const encryptedBuffer = await contentRes.arrayBuffer()
+      console.log('Encrypted size:', encryptedBuffer.byteLength)
+
+      // Step 3: connect wallet
+      setLoadingMsg('Connecting wallet...')
+      const { requestAccess } = await import('@stellar/freighter-api')
       const accessResult = await requestAccess()
-      if (accessResult.error) {
-        throw new Error('Wallet connection required to publish. Please connect Freighter and try again.')
-      }
-      const walletAddress = accessResult.address
-      console.log('Wallet connected:', walletAddress)
-      setProgress(10)
+      if (accessResult.error) throw new Error('Please connect your Freighter wallet')
 
-      // ── Step 2: Encrypt the book file in the browser ───────────────────
-      // AES-256-GCM encryption happens entirely in the browser.
-      // - generateKey()  → creates a random 256-bit AES key
-      // - encryptFile()  → encrypts the file, returns { encryptedData, iv }
-      // - exportKey()    → exports the key as a hex string for key server storage
-      //
-      // The IV (Initialisation Vector) is random per upload and must be stored
-      // alongside the key so the file can be decrypted later.
-      //
-      // IMPORTANT: plaintext never leaves the browser. Only the encrypted
-      // blob is uploaded to Arweave.
-      setStep('Encrypting file...')
-      const aesKey = await generateKey()
-      const { encryptedData, iv } = await encryptFile(file, aesKey)
-      const keyHex = await exportKey(aesKey)
-      console.log('File encrypted. Encrypted size:', encryptedData.byteLength, 'bytes')
-      setProgress(20)
+      // store wallet address for bookmark keys
+      walletAddressRef.current = accessResult.address
 
-      // ── Step 3: Build + sign the Stellar transaction BEFORE uploading ──
-      // We build and sign the Soroban register_book transaction here,
-      // BEFORE uploading to Arweave. This is the atomic part:
-      //
-      // - Freighter prompts the creator to sign here.
-      // - If they cancel, we throw immediately — nothing has been uploaded.
-      // - We use a placeholder Arweave TX ID because the real one won't
-      //   exist until after the Arweave upload completes (Step 5).
-      // - The placeholder is replaced with the real TX ID in Step 8.
-      //
-      // The signed transaction is stored as XDR (Stellar binary format) and
-      // submitted to the network in Step 7.
-      setStep('Preparing Stellar transaction — please sign in Freighter...')
-
-      // placeholder TX ID used during signing
-      // format: "pending_<timestamp>" — makes it easy to identify in logs
-      const PLACEHOLDER_TX = 'pending_' + Date.now()
-
-      let signedXdr: string
-      try {
-        signedXdr = await buildAndSignRegisterBook(
-          walletAddress,
-          parseFloat(price) * 100,   // price in cents (Soroban uses integer math)
-          parseInt(royalty) * 100,   // royalty in basis points (5% = 500 bps)
-          PLACEHOLDER_TX,
-          title,
-        )
-        console.log('Transaction signed successfully. Proceeding with upload...')
-      } catch (signErr) {
-        // Creator cancelled Freighter — nothing uploaded, clean stop
-        throw new Error('Upload cancelled — transaction was not signed.')
-      }
-      setProgress(30)
-
-      // ── Step 4: Upload cover image to Arweave (if provided) ────────────
-      // Cover images are:
-      // - PUBLIC (not encrypted) — they appear in the library for all users
-      // - Uploaded as a separate Arweave transaction from the book
-      // - Tagged with Type: Book-Cover so they can be found via GraphQL
-      // - Non-fatal: if cover upload fails, we log the error and continue
-      //
-      // The cover TX ID is:
-      // - Stored as a Cover-Tx-Id tag on the book transaction (decentralised)
-      // - Stored in Supabase books.cover_tx_id (fast cache)
-      let uploadedCoverTxId: string | null = null
-
-      if (coverFile) {
-        setStep('Uploading cover image to Arweave...')
-        const coverFormData = new FormData()
-        coverFormData.append('cover',  coverFile)
-        coverFormData.append('title',  title)
-        coverFormData.append('author', author)
-
-        const coverRes = await fetch('/api/upload/cover', {
-          method: 'POST',
-          body:   coverFormData,
-        })
-        const coverData: { txId: string; error?: string } = await coverRes.json()
-
-        if (!coverRes.ok) {
-          // non-fatal — book still uploads without a cover
-          console.error('Cover upload failed (non-fatal):', coverData.error)
-        } else {
-          uploadedCoverTxId = coverData.txId
-          setCoverTxId(uploadedCoverTxId)
-          console.log('Cover uploaded successfully. TX ID:', uploadedCoverTxId)
-        }
-      }
-      setProgress(45)
-
-      // ── Step 5: Upload the encrypted book file to Arweave ──────────────
-      // The encrypted file is uploaded to Arweave with metadata tags.
-      // Tags are permanent and queryable via GraphQL — they form the
-      // decentralised index for the book catalogue.
-      //
-      // The cover TX ID is included as a Cover-Tx-Id tag if the cover
-      // was uploaded. This permanently associates the cover with the book.
-      setStep('Uploading to Arweave...')
-
-      // wrap the encrypted ArrayBuffer in a Blob/File for FormData
-      const encryptedBlob = new Blob([encryptedData], { type: 'application/octet-stream' })
-      const encryptedFile = new File([encryptedBlob], file.name + '.enc', {
-        type: 'application/octet-stream',
-      })
-
-      const formData = new FormData()
-      formData.append('file',          encryptedFile)
-      formData.append('title',         title)
-      formData.append('author',        author)
-      formData.append('isbn',          isbn)
-      formData.append('edition',       edition)
-      formData.append('description',   description)
-      formData.append('category',      category.toLowerCase())
-      formData.append('price',         price)
-      formData.append('royalty',       royalty)
-      formData.append('contentFormat', format)
-      formData.append('contentMime',   getMimeType(format))
-      if (uploadedCoverTxId) {
-        formData.append('coverTxId', uploadedCoverTxId)
-      }
-
-      // fake progress animation while waiting for Arweave upload
-      // the real upload happens server-side so we can't track exact progress
-      const progressInterval = setInterval(() => {
-        setProgress(prev => prev >= 75 ? prev : prev + 3)
-      }, 400)
-
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        body:   formData,
-      })
-      clearInterval(progressInterval)
-
-      const uploadData: { txId: string; error?: string } = await uploadRes.json()
-      if (!uploadRes.ok) throw new Error(uploadData.error || 'Arweave upload failed')
-
-      const arweaveTxId = uploadData.txId
-      setTxId(arweaveTxId)
-      console.log('Book uploaded to Arweave. TX ID:', arweaveTxId)
-      setProgress(75)
-
-      // ── Step 6: Submit the signed Stellar transaction ──────────────────────
-      setStep('Submitting to Stellar...')
-      const submitResult = await submitSignedTransaction(signedXdr)
-      console.log('Stellar transaction submitted:', submitResult)
-      setProgress(85)
-
-      // ── Step 7: Get bookId and update Arweave TX ID on-chain ───────────────
-      setStep('Updating on-chain metadata...')
-      let bookId = -1
-      try {
-        const totalBooks = await getTotalBooks(walletAddress)
-        bookId = totalBooks - 1
-        console.log('Book registered with ID:', bookId)
-        await updateArweaveTx(walletAddress, bookId, arweaveTxId)
-        console.log('Arweave TX ID written on-chain successfully')
-      } catch (updateErr) {
-        console.error('Could not update Arweave TX ID on-chain (non-fatal):', updateErr)
-      }
-      setProgress(90)
-
-      // ── Update soroban_book_id in Supabase ─────────────────────────────────
-      // Keeps the Supabase cache in sync with the on-chain bookId
-      // Used by the purchase modal to resolve bookId on other devices
-      try {
-        await fetch('/api/books/setbookid', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ arweaveTxId, bookId }),
-        })
-        console.log('Supabase soroban_book_id updated:', bookId)
-      } catch (err) {
-        console.error('Could not update soroban_book_id in Supabase (non-fatal):', err)
-      }
-
-      // ── Step 8: Store the encryption key on the key server ─────────────────
-      setStep('Storing encryption key...')
-      const keyRes = await fetch('/api/keys', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          arweaveTxId,
-          bookId,
-          key: keyHex,
-          iv,
-          walletAddress,
-        }),
-      })
+      // Step 4: verify ownership + get key
+      setLoadingMsg('Verifying ownership...')
+      const keyRes = await fetch(
+        `/api/keys?arweaveTxId=${txId}&wallet=${accessResult.address}`
+      )
       if (!keyRes.ok) {
-        const keyErr = await keyRes.json()
-        throw new Error(keyErr.error || 'Failed to store encryption key')
+        const e = await keyRes.json()
+        throw new Error(e.error || 'Could not retrieve decryption key')
       }
-      setProgress(100)
+      const { key: keyHex, iv } = await keyRes.json()
 
-      setStep('')
-      setStatus('done')
+      // Step 5: decrypt in browser
+      setLoadingMsg('Decrypting...')
+      const aesKey        = await importKey(keyHex)
+      const decryptedData = await decryptFile(encryptedBuffer, aesKey, iv)
+      console.log('Decrypted size:', decryptedData.byteLength)
+
+      // load any existing bookmark for this book + wallet
+      const bookmark = loadBookmark(txId, accessResult.address)
+      if (bookmark) {
+        console.log('Bookmark found:', bookmark)
+      }
+
+      // Step 6: render
+      const fmt = format as string
+
+      if (fmt === 'EPUB') {
+        setLoadingMsg('Opening e-reader...')
+        setStatus('ready')
+        await new Promise(r => setTimeout(r, 80))
+
+        const ePub = (await import('epubjs')).default
+        if (!epubContainerRef.current) throw new Error('EPUB container not ready')
+
+        const book = ePub(decryptedData, { openAs: 'binary' })
+        epubBookRef.current = book
+
+        const rendition = book.renderTo(epubContainerRef.current, {
+          width:                '100%',
+          height:               '100%',
+          flow:                 'paginated',
+          spread:               'none',
+          allowScriptedContent: true,
+        })
+        epubRenditionRef.current = rendition
+
+        rendition.themes.default(EPUB_THEME)
+
+        rendition.on('rendered', (section: any) => {
+          setTimeout(() => patchEpubSandbox(epubContainerRef.current), 50)
+          const item = book.navigation?.toc?.find(
+            (t: any) => t.href && section?.href && t.href.includes(section.href.split('/').pop())
+          )
+          setEpubChapter(item?.label?.trim() ?? '')
+        })
+
+        rendition.on('relocated', (location: any) => {
+          setEpubAtStart(!!location.atStart)
+          setEpubAtEnd(!!location.atEnd)
+
+          // save EPUB bookmark — CFI string is the exact position in the book
+          // epubjs CFI looks like: epubcfi(/6/4[chap01ref]!/4[body01]/10[para05]/2/1:3)
+          if (location?.start?.cfi && walletAddressRef.current) {
+            saveBookmark(txId, walletAddressRef.current, { cfi: location.start.cfi })
+          }
+        })
+
+        // restore EPUB bookmark if one exists — display at saved CFI position
+        // otherwise start from the beginning
+        if (bookmark?.cfi) {
+          console.log('Restoring EPUB position:', bookmark.cfi)
+          await rendition.display(bookmark.cfi)
+        } else {
+          await rendition.display()
+        }
+
+        setEpubReady(true)
+
+      } else if (fmt === 'TXT') {
+        setTextBody(new TextDecoder().decode(decryptedData))
+        setStatus('ready')
+
+        // restore TXT scroll position after content renders
+        if (bookmark?.pct && bookmark.pct > 0) {
+          console.log('Restoring TXT scroll position:', bookmark.pct + '%')
+          setTimeout(() => {
+            const el    = document.documentElement
+            const total = el.scrollHeight - el.clientHeight
+            el.scrollTop = Math.round((bookmark.pct! / 100) * total)
+          }, 200) // wait for content to render before scrolling
+        }
+
+      } else {
+        // PDF
+        const blob = new Blob([decryptedData], { type: mime })
+        setPdfUrl(URL.createObjectURL(blob))
+
+        // restore PDF page number if bookmark exists
+        if (bookmark?.page && bookmark.page > 1) {
+          console.log('Restoring PDF page:', bookmark.page)
+          setPageNum(bookmark.page)
+        }
+
+        setStatus('ready')
+      }
 
     } catch (err) {
-      console.error('Upload error:', err)
-      setError(err instanceof Error ? err.message : 'Upload failed')
+      console.error('Reader error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load book')
       setStatus('error')
     }
-  }
+  }, [txId])
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  useEffect(() => { if (txId) fetchBook() }, [txId])
+
+  const format    = meta?.contentFormat ?? 'PDF'
+  const bg        = darkMode ? 'bg-gray-950'     : 'bg-amber-50'
+  const tx        = darkMode ? 'text-gray-100'   : 'text-gray-900'
+  const barBg     = darkMode ? 'bg-gray-900'     : 'bg-white'
+  const barBorder = darkMode ? 'border-gray-800' : 'border-gray-200'
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      <div className="max-w-2xl mx-auto px-6 py-12">
+    <div className={`min-h-screen ${bg} ${tx} transition-colors duration-200`}>
 
-        <div className="mb-10">
-          <h1 className="text-3xl font-bold mb-2">Publish a book</h1>
-          <p className="text-gray-400">
-            Your file is encrypted in the browser before upload. Plaintext never leaves your device.
-          </p>
-        </div>
+      <div className={`fixed top-0 left-0 right-0 z-50 ${barBg} border-b ${barBorder}`}>
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-4">
 
-        <div className="space-y-6">
-
-          {/* ── BOOK FILE ── */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Book file <span className="text-indigo-400">*</span>
-              <span className="text-gray-500 font-normal ml-2">PDF, EPUB, or TXT</span>
-            </label>
-            <input
-              type="file"
-              accept=".pdf,.epub,.txt"
-              onChange={handleFileChange}
-              disabled={status === 'uploading'}
-              className="w-full bg-gray-950 border border-gray-700 text-white px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-indigo-600 file:text-white hover:file:bg-indigo-500"
-            />
-            {file && format && (
-              <p className="text-gray-500 text-xs mt-1">
-                {file.name} · {format} · {(file.size / 1024 / 1024).toFixed(2)} MB
-              </p>
-            )}
-            {file && !format && (
-              <p className="text-red-400 text-xs mt-1">
-                Unsupported format — please use PDF, EPUB, or TXT
-              </p>
-            )}
-          </div>
-
-          {/* ── COVER IMAGE ──
-               Optional. Shows a click-target area if no cover is selected,
-               or a preview thumbnail with a remove button if one is selected.
-               The actual file input is hidden — clicking the target triggers it. */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Cover image
-              <span className="text-gray-500 font-normal ml-2">
-                Optional · JPG, PNG, WebP · max 2MB
-              </span>
-            </label>
-
-            {coverPreview ? (
-              // preview state — show thumbnail + file info + remove button
-              <div className="flex items-start gap-4">
-                <img
-                  src={coverPreview}
-                  alt="Cover preview"
-                  className="w-24 h-32 object-cover rounded-lg border border-gray-700"
-                />
-                <div className="flex flex-col gap-2 justify-center">
-                  <p className="text-gray-400 text-sm">{coverFile?.name}</p>
-                  <p className="text-gray-600 text-xs">
-                    {coverFile ? (coverFile.size / 1024).toFixed(0) + ' KB' : ''}
-                  </p>
-                  <button
-                    onClick={removeCover}
-                    disabled={status === 'uploading'}
-                    className="text-red-400 hover:text-red-300 text-sm transition-colors text-left"
-                  >
-                    Remove cover
-                  </button>
-                </div>
-              </div>
-            ) : (
-              // empty state — click target that triggers the hidden file input
-              <div
-                onClick={() => coverInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-700 hover:border-indigo-500 rounded-lg p-8 text-center cursor-pointer transition-colors"
-              >
-                <div className="text-gray-500 text-sm">Click to upload cover image</div>
-                <div className="text-gray-600 text-xs mt-1">
-                  Recommended: 400×600px portrait
-                </div>
-              </div>
-            )}
-
-            {/* hidden file input — triggered programmatically via ref */}
-            <input
-              ref={coverInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={handleCoverChange}
-              disabled={status === 'uploading'}
-              className="hidden"
-            />
-          </div>
-
-          {/* ── TITLE ── */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Title <span className="text-indigo-400">*</span>
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="Introduction to Quantum Computing"
-              disabled={status === 'uploading'}
-              className="w-full bg-gray-950 border border-gray-700 text-white placeholder-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
-            />
-          </div>
-
-          {/* ── AUTHOR ── */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Author <span className="text-indigo-400">*</span>
-            </label>
-            <input
-              type="text"
-              value={author}
-              onChange={e => setAuthor(e.target.value)}
-              placeholder="Dr. Jane Smith"
-              disabled={status === 'uploading'}
-              className="w-full bg-gray-950 border border-gray-700 text-white placeholder-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
-            />
-          </div>
-
-          {/* ── CATEGORY ── */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Category <span className="text-indigo-400">*</span>
-            </label>
-            <select
-              value={category}
-              onChange={e => setCategory(e.target.value)}
-              disabled={status === 'uploading'}
-              className="w-full bg-gray-950 border border-gray-700 text-white px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
-            >
-              <option value="" disabled>Select a category</option>
-              {CATEGORIES.map(c => (
-                <option key={c} value={c.toLowerCase()}>{c}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* ── ISBN + EDITION ── */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">ISBN</label>
-              <input
-                type="text"
-                value={isbn}
-                onChange={e => setIsbn(e.target.value)}
-                placeholder="978-0-000-00000-0"
-                disabled={status === 'uploading'}
-                className="w-full bg-gray-950 border border-gray-700 text-white placeholder-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Edition</label>
-              <input
-                type="text"
-                value={edition}
-                onChange={e => setEdition(e.target.value)}
-                placeholder="3rd"
-                disabled={status === 'uploading'}
-                className="w-full bg-gray-950 border border-gray-700 text-white placeholder-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
-              />
-            </div>
-          </div>
-
-          {/* ── DESCRIPTION ── */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Description
-            </label>
-            <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="A brief description of what readers will discover..."
-              rows={3}
-              disabled={status === 'uploading'}
-              className="w-full bg-gray-950 border border-gray-700 text-white placeholder-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors resize-none"
-            />
-          </div>
-
-          {/* ── PRICE + ROYALTY ──
-               Price is in USD, stored on-chain in cents (integer math).
-               Royalty is the % the creator earns on every secondary resale,
-               stored on-chain in basis points (5% = 500 bps).
-               Both are enforced permanently by the Soroban contract. */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Price (USD) <span className="text-indigo-400">*</span>
-              </label>
-              <div className="relative">
-                <span className="absolute left-4 top-3.5 text-gray-500">$</span>
-                <input
-                  type="number"
-                  value={price}
-                  onChange={e => setPrice(e.target.value)}
-                  placeholder="49.99"
-                  min="0"
-                  step="0.01"
-                  disabled={status === 'uploading'}
-                  className="w-full bg-gray-950 border border-gray-700 text-white placeholder-gray-600 pl-8 pr-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Resale royalty (%)
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={royalty}
-                  onChange={e => setRoyalty(e.target.value)}
-                  min="0"
-                  max="50"
-                  disabled={status === 'uploading'}
-                  className="w-full bg-gray-950 border border-gray-700 text-white placeholder-gray-600 px-4 py-3 rounded-lg focus:outline-none focus:border-indigo-500 transition-colors"
-                />
-                <span className="absolute right-4 top-3.5 text-gray-500">%</span>
-              </div>
-              <p className="text-gray-600 text-xs mt-1">
-                You earn this % every time a reader resells your book
-              </p>
-            </div>
-          </div>
-
-          {/* ── UPLOAD BUTTON ──
-               Disabled until all required fields are valid.
-               Label changes to reflect current upload state. */}
           <button
-            onClick={handleUpload}
-            disabled={!isFormValid() || status === 'uploading' || status === 'done'}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white py-3 rounded-lg font-medium transition-colors"
+            onClick={() => router.push('/library')}
+            className="text-gray-400 hover:text-white transition-colors text-sm flex-shrink-0"
           >
-            {status === 'uploading' && (step || `Uploading... ${progress}%`)}
-            {status === 'done'      && 'Upload complete ✓'}
-            {status === 'idle'      && 'Upload to Arweave'}
-            {status === 'error'     && 'Try again'}
+            ← Library
           </button>
 
-          {/* ── PROGRESS BAR ── */}
-          {status === 'uploading' && (
-            <div className="space-y-2">
-              <div className="w-full bg-gray-800 rounded-full h-1.5">
-                <div
-                  className="bg-indigo-500 h-1.5 rounded-full transition-all duration-500"
-                  style={{ width: progress + '%' }}
-                />
-              </div>
-              <div className="text-gray-500 text-xs text-center">{step}</div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium truncate">{meta?.title || 'Loading...'}</div>
+            {meta?.author && (
+              <div className="text-xs text-gray-500 truncate">{meta.author}</div>
+            )}
+          </div>
+
+          {format === 'EPUB' && epubChapter && (
+            <div className="text-xs text-gray-500 truncate max-w-xs hidden md:block">
+              {epubChapter}
             </div>
           )}
 
-          {/* ── SUCCESS ──
-               Shows both the book TX ID and cover TX ID (if applicable).
-               Both are permanent Arweave transactions — they exist forever. */}
-          {status === 'done' && txId && (
-            <div className="bg-green-950 border border-green-800 rounded-xl p-6 space-y-3">
-              <div className="text-green-400 font-medium">Upload complete ✓</div>
-              <div>
-                <div className="text-gray-500 text-xs uppercase tracking-wider mb-1">
-                  Arweave transaction ID
-                </div>
-                <code className="text-green-300 text-xs break-all">{txId}</code>
-              </div>
-              {coverTxId && (
-                <div>
-                  <div className="text-gray-500 text-xs uppercase tracking-wider mb-1">
-                    Cover image TX ID
-                  </div>
-                  <code className="text-green-300 text-xs break-all">{coverTxId}</code>
-                </div>
-              )}
-              <div className="flex gap-4">
-                <a
-                  href={'https://arweave.net/' + txId}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-indigo-400 hover:text-indigo-300 text-sm transition-colors"
-                >
-                  View on Arweave →
-                </a>
-                <button
-                  onClick={resetForm}
-                  className="text-gray-400 hover:text-white text-sm transition-colors"
-                >
-                  Upload another →
-                </button>
-              </div>
+          {meta?.contentFormat && (
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded flex-shrink-0 ${
+              format === 'EPUB' ? 'bg-purple-900 text-purple-300' :
+              format === 'PDF'  ? 'bg-indigo-900 text-indigo-300' :
+                                  'bg-gray-800 text-gray-400'
+            }`}>
+              {format}
+            </span>
+          )}
+
+          {format === 'EPUB' && epubReady && (
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => epubRenditionRef.current?.prev()} disabled={epubAtStart} className="text-gray-400 hover:text-white disabled:opacity-30 w-7 h-7 border border-gray-700 rounded flex items-center justify-center transition-colors">‹</button>
+              <button onClick={() => epubRenditionRef.current?.next()} disabled={epubAtEnd}   className="text-gray-400 hover:text-white disabled:opacity-30 w-7 h-7 border border-gray-700 rounded flex items-center justify-center transition-colors">›</button>
             </div>
           )}
 
-          {/* ── ERROR ── */}
-          {status === 'error' && error && (
-            <div className="bg-red-950 border border-red-800 rounded-xl p-4">
-              <div className="text-red-400 font-medium mb-1">Upload failed</div>
-              <p className="text-red-300 text-xs leading-relaxed">{error}</p>
+          {status === 'ready' && format === 'PDF' && numPages > 0 && (
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => setPageNum(p => Math.max(1, p - 1))} disabled={pageNum <= 1} className="text-gray-400 hover:text-white disabled:opacity-30 w-7 h-7 border border-gray-700 rounded flex items-center justify-center">‹</button>
+              <span className="text-gray-400 text-xs w-20 text-center">{pageNum} / {numPages}</span>
+              <button onClick={() => setPageNum(p => Math.min(numPages, p + 1))} disabled={pageNum >= numPages} className="text-gray-400 hover:text-white disabled:opacity-30 w-7 h-7 border border-gray-700 rounded flex items-center justify-center">›</button>
             </div>
           )}
 
+          {status === 'ready' && format === 'TXT' && (
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => setFontSize(s => Math.max(12, s - 2))} className="text-xs text-gray-400 hover:text-white w-7 h-7 border border-gray-700 rounded flex items-center justify-center">A-</button>
+              <button onClick={() => setFontSize(s => Math.min(28, s + 2))} className="text-xs text-gray-400 hover:text-white w-7 h-7 border border-gray-700 rounded flex items-center justify-center">A+</button>
+              <button onClick={() => setDarkMode(d => !d)} className="text-xs text-gray-400 hover:text-white w-7 h-7 border border-gray-700 rounded flex items-center justify-center">
+                {darkMode ? '☀' : '☾'}
+              </button>
+              <span className="text-xs text-gray-500 w-10 text-right">{progress}%</span>
+            </div>
+          )}
         </div>
+
+        {format === 'TXT' && (
+          <div className="absolute bottom-0 left-0 h-0.5 bg-indigo-500 transition-all duration-150" style={{ width: progress + '%' }} />
+        )}
       </div>
+
+      <div className={format === 'EPUB' ? 'pt-14 h-screen' : 'pt-20 pb-20'}>
+
+        {status === 'loading' && (
+          <div className="flex flex-col items-center justify-center py-40">
+            <div className="w-10 h-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+            <div className="text-gray-400 text-sm">{loadingMsg}</div>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="max-w-2xl mx-auto px-6 text-center py-40">
+            <div className="text-5xl mb-4">📕</div>
+            <div className="text-red-400 font-medium mb-2">Could not load book</div>
+            <div className="text-gray-500 text-sm mb-6">{error}</div>
+            <button onClick={fetchBook} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-lg text-sm transition-colors">
+              Try again
+            </button>
+          </div>
+        )}
+
+        {status === 'ready' && format === 'EPUB' && (
+          <div className="relative w-full" style={{ height: 'calc(100vh - 56px)' }}>
+            <div ref={epubContainerRef} className="w-full h-full bg-white" style={{ height: 'calc(100vh - 56px)' }} />
+            <button onClick={() => epubRenditionRef.current?.prev()} disabled={epubAtStart} className="absolute left-0 top-0 h-full w-16 flex items-center justify-center text-gray-400 hover:text-gray-700 disabled:opacity-0 transition-colors z-10" aria-label="Previous page">
+              <span className="text-4xl select-none">‹</span>
+            </button>
+            <button onClick={() => epubRenditionRef.current?.next()} disabled={epubAtEnd} className="absolute right-0 top-0 h-full w-16 flex items-center justify-center text-gray-400 hover:text-gray-700 disabled:opacity-0 transition-colors z-10" aria-label="Next page">
+              <span className="text-4xl select-none">›</span>
+            </button>
+          </div>
+        )}
+
+        {status === 'ready' && format === 'PDF' && pdfUrl && (
+          <div className="max-w-3xl mx-auto px-4">
+            {meta && (
+              <div className="mb-8 pb-6 border-b border-gray-800">
+                <h1 className="text-2xl font-bold mb-1">{meta.title}</h1>
+                <p className="text-gray-400">{meta.author}{meta.edition ? ' · ' + meta.edition + ' edition' : ''}</p>
+                {meta.isbn && <p className="text-gray-600 text-xs mt-1">ISBN {meta.isbn}</p>}
+              </div>
+            )}
+            <div className="w-full rounded-xl overflow-hidden border border-gray-800">
+              <iframe src={pdfUrl} className="w-full" style={{ height: '80vh' }} title={meta?.title || 'Book'} />
+            </div>
+          </div>
+        )}
+
+        {status === 'ready' && format === 'TXT' && textBody && (
+          <div className="max-w-2xl mx-auto px-6">
+            {meta && (
+              <div className="mb-10 pb-8 border-b border-gray-800">
+                <h1 className="font-bold leading-tight mb-2" style={{ fontSize: fontSize + 8 + 'px' }}>{meta.title}</h1>
+                <p className="text-gray-400">{meta.author}{meta.edition ? ' · ' + meta.edition + ' edition' : ''}</p>
+                {meta.isbn && <p className="text-gray-600 text-xs mt-1">ISBN {meta.isbn}</p>}
+              </div>
+            )}
+            <div className="leading-relaxed whitespace-pre-wrap font-serif" style={{ fontSize: fontSize + 'px' }}>
+              {textBody}
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {status === 'ready' && meta && format === 'TXT' && (
+        <div className={`fixed bottom-0 left-0 right-0 ${barBg} border-t ${barBorder} px-4 py-2`}>
+          <div className="max-w-4xl mx-auto flex justify-between text-xs text-gray-500">
+            <span className="truncate">{meta.title}</span>
+            <span className="flex-shrink-0 ml-4">{progress}% complete</span>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
