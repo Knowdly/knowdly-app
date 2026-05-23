@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const COOKIE_NAME = 'knowdly_access'
-const VALID_TOKEN = '7a47b8a3baf9d324b0423f01d81a3a34dbb4bb6425dc6a89b806f7a10ac7c3bb'
+const VALID_TOKEN = '123d3ee19f254eeccbac647c94b39b1b1ac7c960e3d4df524eb60736a7d1f9c7'
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
