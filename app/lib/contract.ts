@@ -193,7 +193,7 @@ export async function buildAndSignRegisterBook(
   const priceStroops = BigInt(price) * BigInt(100_000)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -246,7 +246,7 @@ export async function updateArweaveTx(
   const contract = new Contract(CONTRACT_ID)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -290,7 +290,7 @@ export async function transferToken(
   const contract = new Contract(CONTRACT_ID)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -315,7 +315,7 @@ export async function getTotalBooks(callerAddress: string): Promise<number> {
   const account  = new Account(callerAddress, '0')
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(contract.call('get_total_books'))
@@ -349,7 +349,7 @@ export async function registerBook(
   const priceStroops = BigInt(price) * BigInt(100_000)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -385,7 +385,7 @@ export async function purchaseBook(
   const contract = new Contract(CONTRACT_ID)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -415,7 +415,7 @@ export async function getToken(
   const account  = new Account(callerAddress, '0')
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -460,7 +460,7 @@ export async function getTokensByOwner(ownerAddress: string): Promise<number[]> 
   const account  = new Account(ownerAddress, '0')
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -502,7 +502,7 @@ export async function ownsBook(
   const account  = new Account(ownerAddress, '0')
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -545,7 +545,7 @@ export async function getBookArweaveTxId(
   const account  = new Account(callerAddress, '0')
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -584,7 +584,7 @@ export async function getPublisherAddress(
   const account = new Account(callerAddress, '0')
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -618,7 +618,7 @@ export async function buyListing(
   const contract = new Contract(CONTRACT_ID)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -644,7 +644,7 @@ export async function listForSale(
   const contract = new Contract(CONTRACT_ID)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
@@ -671,7 +671,7 @@ export async function cancelListing(
   const contract = new Contract(CONTRACT_ID)
 
   const transaction = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
+    fee:               HIGH_FEE,
     networkPassphrase: NETWORK,
   })
     .addOperation(
