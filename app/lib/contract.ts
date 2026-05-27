@@ -30,6 +30,9 @@ export const CONTRACT_ID = 'CBSEVXLOG72CW6L77J6HGRSMKI3IXKLKQTPPMLQS65NNHGGNXGOX
 const HORIZON_URL = 'https://horizon-testnet.stellar.org'
 const RPC_URL     = 'https://soroban-testnet.stellar.org'
 const NETWORK     = Networks.TESTNET
+// Override BASE_FEE with a higher value to avoid txINSUFFICIENT_FEE errors
+// 1,000,000 stroops = 0.1 XLM — high enough for any testnet conditions
+const HIGH_FEE = '1000000'
 
 // ── Helper — load account ─────────────────────────────────────────────────────
 
