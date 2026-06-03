@@ -201,15 +201,21 @@ export default function PurchaseModal({ book, onClose, onSuccess }: Props) {
       // Look it up from Supabase using the arweaveTxId.
       let sorobanBookId = book.sorobanBookId
       if (sorobanBookId === -1) {
-        try {
-          const bookIdRes  = await fetch(`/api/books/bookid?arweaveTxId=${book.txId}`)
+        const bookIdRes  = await fetch(`/api/books/bookid?arweaveTxId=${book.txId}`)
+
+        // session expired — hard stop before any payment is made
+        if (bookIdRes.status === 401) {
+          throw new Error('Your session has expired. Please refresh the page and log in again before purchasing.')
+        }
+
+        if (bookIdRes.ok) {
           const bookIdData = await bookIdRes.json()
-          if (bookIdRes.ok && bookIdData.bookId !== undefined) {
+          if (bookIdData.bookId !== undefined) {
             sorobanBookId = bookIdData.bookId
             console.log('Resolved sorobanBookId from Supabase:', sorobanBookId)
           }
-        } catch (err) {
-          console.error('Could not resolve sorobanBookId (non-fatal):', err)
+        } else {
+          throw new Error('Could not load book details. Please refresh and try again.')
         }
       }
 

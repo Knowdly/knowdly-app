@@ -13,7 +13,15 @@ export function middleware(request: NextRequest) {
   const cookie = request.cookies.get(COOKIE_NAME)
   if (cookie?.value === VALID_TOKEN) return NextResponse.next()
 
-  // redirect to gate page on Namecheap
+  // API calls get a 401 — not a redirect
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.json(
+      { error: 'Session expired. Please log in again.' },
+      { status: 401 }
+    )
+  }
+
+  // page requests get redirected to gate
   return NextResponse.redirect('https://knowdly.com/demo')
 }
 
