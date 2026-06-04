@@ -330,13 +330,13 @@ export default function LibraryPage() {
       console.log('Owned txIds:', Array.from(onChainOwned))
 
       // step 4: update ownedBooks state and cache in localStorage
-      if (onChainOwned.size > 0) {
-        setOwnedBooks(prev => {
-          const updated = new Set([...prev, ...onChainOwned])
-          // cache per wallet address so different wallets don't share a cache
+      if (onChainOwned.size > 0 || tokenIds.length >= 0) {
+        setOwnedBooks(() => {
+          // use ONLY on-chain ownership — don't merge with localStorage
+          // this ensures sold books are removed from the UI
           const key = `knowdly_owned_books_${walletAddr}`
-          localStorage.setItem(key, JSON.stringify(Array.from(updated)))
-          return updated
+          localStorage.setItem(key, JSON.stringify(Array.from(onChainOwned)))
+          return onChainOwned
         })
       }
     } catch (err) {
