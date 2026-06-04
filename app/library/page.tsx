@@ -253,22 +253,33 @@ export default function LibraryPage() {
   // Silently checks if Freighter is connected on page load.
   // If connected, loads the ownership cache and triggers on-chain ownership check.
 
-  useEffect(() => {
-    async function checkWallet() {
-      try {
-        const { requestAccess } = await import('@stellar/freighter-api')
-        const result = await requestAccess()
-        if (!result.error && result.address) {
-          setWalletAddress(result.address)
-          // load per-wallet ownership cache from localStorage
-          const key    = `knowdly_owned_books_${result.address}`
-          const stored = localStorage.getItem(key)
+ useEffect(() => {
+  async function checkWallet() {
+    try {
+      const { requestAccess } = await import('@stellar/freighter-api')
+      const result = await requestAccess()
+      if (!result.error && result.address) {
+        const newAddress = result.address
+        
+        // only clear cache if wallet changed since last visit
+        const lastWallet = localStorage.getItem('knowdly_last_wallet')
+        if (lastWallet !== newAddress) {
+          // different wallet — clear stale cache
+          localStorage.removeItem(`knowdly_owned_books_${newAddress}`)
+          localStorage.setItem('knowdly_last_wallet', newAddress)
+          setOwnedBooks(new Set())
+        } else {
+          // same wallet — load cache for fast initial render
+          const stored = localStorage.getItem(`knowdly_owned_books_${newAddress}`)
           setOwnedBooks(stored ? new Set(JSON.parse(stored)) : new Set())
         }
-      } catch { /* wallet not connected — silently ignore */ }
-    }
-    checkWallet()
-  }, [])
+        
+        setWalletAddress(newAddress)
+      }
+    } catch { /* wallet not connected */ }
+  }
+  checkWallet()
+}, [])
 
   // trigger on-chain ownership check when wallet + books are both ready
   useEffect(() => {
