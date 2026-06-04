@@ -205,6 +205,12 @@ export default function LibraryPage() {
     cat:        string,
     fmt:        string,
   ) => {
+
+    // check and confirm any pending books on every library load
+    try {
+      await fetch('/api/books/confirm')
+    } catch { /* non-fatal */ }
+
     setLoading(true)
     setError(null)
     try {
