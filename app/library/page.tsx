@@ -266,7 +266,7 @@ export default function LibraryPage() {
 
       // check if wallet is connected before requesting access
       const connected = await isConnected()
-      if (!connected) return
+      if (!connected.isConnected) return
 
       const result = await requestAccess()
       if (!result.error && result.address) {
@@ -297,7 +297,7 @@ export default function LibraryPage() {
     
     // only poll if wallet is already connected — don't trigger popup
     const connected = await isConnected()
-    if (!connected) return
+    if (!connected.isConnected) return
     
     const result = await requestAccess()
     if (!result.error && result.address) {
