@@ -290,32 +290,33 @@ export default function LibraryPage() {
     } catch { /* wallet not connected */ }
   }
   checkWallet()
-// poll for wallet changes every 3 seconds
-  const interval = setInterval(async () => {
-  try {
-    const { requestAccess, isConnected } = await import('@stellar/freighter-api')
-    
-    // only poll if wallet is already connected — don't trigger popup
-    const connected = await isConnected()
-    if (!connected.isConnected) return
-    
-    const result = await requestAccess()
-    if (!result.error && result.address) {
-      setWalletAddress(prev => {
-        if (prev !== null && prev !== result.address) {
-          console.log('Wallet changed to:', result.address)
-          localStorage.removeItem(`knowdly_owned_books_${result.address}`)
-          localStorage.setItem('knowdly_last_wallet', result.address)
-          window.location.reload()
-        }
-        return result.address
-      })
-    }
-  } catch { /* ignore */ }
-}, 3000)
-
-  return () => clearInterval(interval)
 }, [])
+// poll for wallet changes every 3 seconds
+//   const interval = setInterval(async () => {
+//   try {
+//     const { requestAccess, isConnected } = await import('@stellar/freighter-api')
+    
+//     // only poll if wallet is already connected — don't trigger popup
+//     const connected = await isConnected()
+//     if (!connected.isConnected) return
+    
+//     const result = await requestAccess()
+//     if (!result.error && result.address) {
+//       setWalletAddress(prev => {
+//         if (prev !== null && prev !== result.address) {
+//           console.log('Wallet changed to:', result.address)
+//           localStorage.removeItem(`knowdly_owned_books_${result.address}`)
+//           localStorage.setItem('knowdly_last_wallet', result.address)
+//           window.location.reload()
+//         }
+//         return result.address
+//       })
+//     }
+//   } catch { /* ignore */ }
+// }, 3000)
+
+//   return () => clearInterval(interval)
+// }, [])
 
   // trigger on-chain ownership check when wallet + books are both ready
   useEffect(() => {
