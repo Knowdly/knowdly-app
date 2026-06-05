@@ -39,27 +39,31 @@ export default function WalletConnect({ onConnect }: Props) {
   // checkConnection checks if Freighter is installed and already approved
   async function checkConnection() {
     try {
-      // isConnected returns true if Freighter extension is installed
       const connected = await isConnected()
 
-      if (!connected) {
-        // Freighter is not installed in this browser
+      // check the isConnected property — not the object itself
+      if (!connected.isConnected) {
         setWalletState('not_installed')
         return
       }
 
-      // try to get the public key without prompting
-      // this works if the user already approved the connection previously
-      const key = (await requestAccess()).address
+      // use isAllowed to check if user previously approved — no popup
+      const { isAllowed } = await import('@stellar/freighter-api')
+      const allowed = await isAllowed()
+      if (!allowed.isAllowed) {
+        // not yet approved — wait for user to click connect
+        setWalletState('disconnected')
+        return
+      }
 
+      // already approved — get address without popup
+      const key = (await requestAccess()).address
       if (key) {
-        // already connected from a previous session
         setPublicKey(key)
         setWalletState('connected')
         onConnect?.(key)
       }
     } catch {
-      // not connected yet — that's fine, wait for user to click connect
       setWalletState('disconnected')
     }
   }
