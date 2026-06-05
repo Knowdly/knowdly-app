@@ -262,7 +262,12 @@ export default function LibraryPage() {
  useEffect(() => {
   async function checkWallet() {
     try {
-      const { requestAccess } = await import('@stellar/freighter-api')
+      const { requestAccess, isConnected } = await import('@stellar/freighter-api')
+
+      // check if wallet is connected before requesting access
+      const connected = await isConnected()
+      if (!connected) return
+
       const result = await requestAccess()
       if (!result.error && result.address) {
         const newAddress = result.address
@@ -287,23 +292,27 @@ export default function LibraryPage() {
   checkWallet()
 // poll for wallet changes every 3 seconds
   const interval = setInterval(async () => {
-    try {
-      const { requestAccess } = await import('@stellar/freighter-api')
-      const result = await requestAccess()
-      if (!result.error && result.address) {
-        setWalletAddress(prev => {
-          if (prev !== null && prev !== result.address) {
-            // wallet changed — reload page for clean state
-            console.log('Wallet changed to:', result.address)
-            localStorage.removeItem(`knowdly_owned_books_${result.address}`)
-            localStorage.setItem('knowdly_last_wallet', result.address)
-            window.location.reload()
-          }
-          return result.address
-        })
-      }
-    } catch { /* ignore */ }
-  }, 3000)
+  try {
+    const { requestAccess, isConnected } = await import('@stellar/freighter-api')
+    
+    // only poll if wallet is already connected — don't trigger popup
+    const connected = await isConnected()
+    if (!connected) return
+    
+    const result = await requestAccess()
+    if (!result.error && result.address) {
+      setWalletAddress(prev => {
+        if (prev !== null && prev !== result.address) {
+          console.log('Wallet changed to:', result.address)
+          localStorage.removeItem(`knowdly_owned_books_${result.address}`)
+          localStorage.setItem('knowdly_last_wallet', result.address)
+          window.location.reload()
+        }
+        return result.address
+      })
+    }
+  } catch { /* ignore */ }
+}, 3000)
 
   return () => clearInterval(interval)
 }, [])
