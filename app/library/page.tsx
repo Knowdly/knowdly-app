@@ -264,59 +264,55 @@ export default function LibraryPage() {
     try {
       const { requestAccess, isConnected } = await import('@stellar/freighter-api')
 
-      // check if wallet is connected before requesting access
       const connected = await isConnected()
       if (!connected.isConnected) return
 
       const result = await requestAccess()
       if (!result.error && result.address) {
         const newAddress = result.address
-        
-        // only clear cache if wallet changed since last visit
         const lastWallet = localStorage.getItem('knowdly_last_wallet')
         if (lastWallet !== newAddress) {
-          // different wallet — clear stale cache
           localStorage.removeItem(`knowdly_owned_books_${newAddress}`)
           localStorage.setItem('knowdly_last_wallet', newAddress)
           setOwnedBooks(new Set())
         } else {
-          // same wallet — load cache for fast initial render
           const stored = localStorage.getItem(`knowdly_owned_books_${newAddress}`)
           setOwnedBooks(stored ? new Set(JSON.parse(stored)) : new Set())
         }
-        
         setWalletAddress(newAddress)
       }
     } catch { /* wallet not connected */ }
   }
-  checkWallet()
-}, [])
-// poll for wallet changes every 3 seconds
-//   const interval = setInterval(async () => {
-//   try {
-//     const { requestAccess, isConnected } = await import('@stellar/freighter-api')
-    
-//     // only poll if wallet is already connected — don't trigger popup
-//     const connected = await isConnected()
-//     if (!connected.isConnected) return
-    
-//     const result = await requestAccess()
-//     if (!result.error && result.address) {
-//       setWalletAddress(prev => {
-//         if (prev !== null && prev !== result.address) {
-//           console.log('Wallet changed to:', result.address)
-//           localStorage.removeItem(`knowdly_owned_books_${result.address}`)
-//           localStorage.setItem('knowdly_last_wallet', result.address)
-//           window.location.reload()
-//         }
-//         return result.address
-//       })
-//     }
-//   } catch { /* ignore */ }
-// }, 3000)
 
-//   return () => clearInterval(interval)
-// }, [])
+  async function startWatcher() {
+    try {
+      const { WatchWalletChanges } = await import('@stellar/freighter-api')
+      const watcher = new WatchWalletChanges(3000)
+      watcher.watch((params) => {
+        if (params.error) return
+        setWalletAddress(prev => {
+          if (prev !== null && prev !== params.address) {
+            console.log('Wallet changed to:', params.address)
+            localStorage.removeItem(`knowdly_owned_books_${params.address}`)
+            localStorage.setItem('knowdly_last_wallet', params.address)
+            window.location.reload()
+          }
+          return params.address
+        })
+      })
+      return watcher
+    } catch {
+      return null
+    }
+  }
+
+  checkWallet()
+  const watcherPromise = startWatcher()
+
+  return () => {
+    watcherPromise.then(watcher => watcher?.stop())
+  }
+}, [])
 
   // trigger on-chain ownership check when wallet + books are both ready
   useEffect(() => {
