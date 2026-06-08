@@ -193,9 +193,22 @@ export async function GET(request: NextRequest) {
     let blockedIds = new Set<string>()
     try {
       const supabase = getSupabase()
+
+      // get blocklisted TX IDs
       const { data: blocked } = await supabase.from('blocklist').select('arweave_tx_id')
-      blockedIds = new Set(blocked?.map((b: any) => b.arweave_tx_id) ?? [])
-      if (blockedIds.size > 0) console.log(`Blocklist active: ${blockedIds.size} TX IDs blocked`)
+
+      // also get unconfirmed books — hide them from Arweave GraphQL results too
+      const { data: unconfirmed } = await supabase
+        .from('books')
+        .select('arweave_tx_id')
+        .eq('confirmed', false)
+
+      blockedIds = new Set([
+        ...(blocked?.map((b: any) => b.arweave_tx_id) ?? []),
+        ...(unconfirmed?.map((b: any) => b.arweave_tx_id) ?? []),
+      ])
+
+      if (blockedIds.size > 0) console.log(`Blocklist active: ${blockedIds.size} TX IDs blocked (including unconfirmed)`)
     } catch (err) {
       console.error('Could not fetch blocklist (non-fatal):', err)
     }
