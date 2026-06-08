@@ -265,7 +265,7 @@ export default function MyLibraryPage() {
 
         {/* ── HEADER ── */}
         <div className="mb-10">
-          <h1 className="text-3xl font-bold mb-2">My Library</h1>
+          <h1 className="text-3xl font-bold mb-2">My Books</h1>
           <p className="text-gray-400">
             Digital books you own on-chain. List them for resale when you're done.
           </p>
