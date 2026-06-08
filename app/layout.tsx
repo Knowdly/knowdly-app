@@ -27,7 +27,7 @@ export default function RootLayout({
 
             {/* logo */}
             <a href="/" className="text-xl font-bold text-white tracking-tight">
-              Know<span className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">dly</span>
+              Know<span className="bg-gradient-to-r from-[#8b7bff] to-[#f7c26a] bg-clip-text text-transparent">dly</span>
             </a>
 
             {/* navigation links */}
