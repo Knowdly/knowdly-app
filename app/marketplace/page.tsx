@@ -138,10 +138,10 @@ export default function MarketplacePage() {
               Be the first to list a digital book for resale from your library
             </div>
             <a
-              href="/mylibrary"
+              href="/mybooks"
               className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors"
             >
-              Go to My Library
+              Go to My Books
             </a>
           </div>
         )}

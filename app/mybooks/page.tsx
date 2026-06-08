@@ -1,4 +1,4 @@
-// app/mylibrary/page.tsx
+// app/mybooks/page.tsx
 //
 // ── OVERVIEW ──────────────────────────────────────────────────────────────────
 // Private page showing all digital books owned by the connected wallet.

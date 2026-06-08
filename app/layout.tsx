@@ -38,7 +38,7 @@ export default function RootLayout({
               <a href="/marketplace" className="hover:text-white transition-colors">
                 Marketplace
               </a>
-              <a href="/mylibrary" className="hover:text-white transition-colors">
+              <a href="/mybooks" className="hover:text-white transition-colors">
                 My Books
               </a>
               <a href="/upload" className="hover:text-white transition-colors">
