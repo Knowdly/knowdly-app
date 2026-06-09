@@ -1,82 +1,65 @@
 // app/api/content/[txId]/route.ts
-// Proxies content requests from the browser to ArLocal
-// Avoids CORS issues — browser calls Next.js, Next.js fetches from ArLocal
+// Proxies encrypted book content from Arweave to the browser.
+// Uses /raw/ endpoint to get pure file data without metadata headers.
 
 import { NextRequest, NextResponse } from 'next/server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+// Gateways in priority order — arweave.net is authoritative
+// /raw/ endpoint returns pure file data without Arweave metadata wrapper
+const GATEWAYS = [
+  'https://arweave.net',
+  'https://permagate.io',
+]
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ txId: string }> }
 ) {
   try {
-    // await params — required in Next.js 16
     const { txId } = await params
-
     console.log('Content proxy fetching txId:', txId)
 
-    
-//=====================================================================
-    // fetch from ArLocal on the server side — no CORS issues here
-    // ArLocal requires /data suffix to get raw file content
-    // on mainnet arweave.net/<txId> returns the data directly
+    let response: Response | null = null
+    let successGateway = ''
 
-   const gateways = [
-  'https://arweave.net',
-  'https://permagate.io',
-]
-  let response: Response | null = null
-  let successGateway = ''
-  for (const gw of gateways) {
-    try {
-      console.log('Trying gateway:', gw)
-      const res = await fetch(`${gw}/${txId}`, {
-        redirect: 'follow',
-        headers: { 'Accept': 'application/octet-stream, */*' },
-        // no caching — always fetch fresh from gateway
-        cache: 'no-store',
-      })
-      console.log(`${gw} status:`, res.status)
-      if (res.ok) {
-        response = res
-        successGateway = gw
-        break
+    for (const gw of GATEWAYS) {
+      try {
+        console.log('Trying gateway:', gw)
+        // /raw/ returns pure encrypted file data without Arweave metadata headers
+        const res = await fetch(`${gw}/raw/${txId}`, {
+          redirect: 'follow',
+          headers: { 'Accept': 'application/octet-stream, */*' },
+          cache: 'no-store',
+        })
+        console.log(`${gw} status:`, res.status)
+        if (res.ok) {
+          response = res
+          successGateway = gw
+          break
+        }
+      } catch (err) {
+        console.error(`${gw} failed:`, err)
       }
-    } catch (err) {
-      console.error(`${gw} failed:`, err)
     }
-  }
-  console.log('Serving content from gateway:', successGateway)
 
-if (!response) {
-  return NextResponse.json({ error: 'Content not found on any gateway' }, { status: 572 })
-}
-
- //======================================================================   
-    if (!response.ok) {
+    if (!response) {
       return NextResponse.json(
-        { error: 'Content not found', status: response.status },
-        { status: response.status }
+        { error: 'Content not found on any gateway' },
+        { status: 572 }
       )
     }
 
-    // get the content type from ArLocal
-    const contentType = response.headers.get('content-type') || 
-      'application/octet-stream'
-
-    // get the raw bytes
     const buffer = await response.arrayBuffer()
-
+    console.log('Serving content from gateway:', successGateway)
     console.log('Content buffer size:', buffer.byteLength, 'bytes')
-    console.log('Returning content type:', contentType)
 
-    // return the content with the correct content type
     return new NextResponse(buffer, {
       status: 200,
       headers: {
-        'Content-Type': contentType,
+        'Content-Type': 'application/octet-stream',
         'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
     })
