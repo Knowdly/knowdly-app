@@ -28,25 +28,28 @@ export async function GET(
   'https://ar-io.net',
   'https://permagate.io',
 ]
-
-let response: Response | null = null
-
-for (const gw of gateways) {
-  try {
-    console.log('Trying gateway:', gw)
-    const res = await fetch(`${gw}/${txId}`, {
-      redirect: 'follow',
-      headers: { 'Accept': 'application/octet-stream, */*' },
-    })
-    console.log(`${gw} status:`, res.status)
-    if (res.ok) {
-      response = res
-      break
+  let response: Response | null = null
+  let successGateway = ''
+  for (const gw of gateways) {
+    try {
+      console.log('Trying gateway:', gw)
+      const res = await fetch(`${gw}/${txId}`, {
+        redirect: 'follow',
+        headers: { 'Accept': 'application/octet-stream, */*' },
+        // no caching — always fetch fresh from gateway
+        cache: 'no-store',
+      })
+      console.log(`${gw} status:`, res.status)
+      if (res.ok) {
+        response = res
+        successGateway = gw
+        break
+      }
+    } catch (err) {
+      console.error(`${gw} failed:`, err)
     }
-  } catch (err) {
-    console.error(`${gw} failed:`, err)
   }
-}
+  console.log('Serving content from gateway:', successGateway)
 
 if (!response) {
   return NextResponse.json({ error: 'Content not found on any gateway' }, { status: 572 })
@@ -75,7 +78,7 @@ if (!response) {
       status: 200,
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=31536000, s-maxage=0',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
     })
 
