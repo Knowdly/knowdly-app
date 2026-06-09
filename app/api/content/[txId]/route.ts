@@ -25,7 +25,6 @@ export async function GET(
 
    const gateways = [
   'https://arweave.net',
-  'https://ar-io.net',
   'https://permagate.io',
 ]
   let response: Response | null = null
