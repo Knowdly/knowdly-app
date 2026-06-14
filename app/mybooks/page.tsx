@@ -62,7 +62,7 @@ function getPlaceholderGradient(title: string): string {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function MyLibraryPage() {
+export default function MyBooksPage() {
 
   const [walletAddress, setWalletAddress]   = useState<string | null>(null)
   const [ownedBooks,    setOwnedBooks]       = useState<OwnedBook[]>([])

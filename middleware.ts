@@ -6,10 +6,25 @@ const VALID_TOKEN = '123d3ee19f254eeccbac647c94b39b1b1ac7c960e3d4df524eb60736a7d
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // always allow the gate endpoint through
+  // Always allow the gate endpoint through
   if (pathname === '/api/gate') return NextResponse.next()
 
-  // check for valid access cookie
+  // Check if token is in URL — set cookie and redirect cleanly
+  const urlToken = request.nextUrl.searchParams.get('token')
+  if (urlToken === VALID_TOKEN) {
+    const url = request.nextUrl.clone()
+    url.searchParams.delete('token')
+    const res = NextResponse.redirect(url)
+    res.cookies.set(COOKIE_NAME, VALID_TOKEN, {
+      httpOnly: true,
+      maxAge: 86400,
+      path: '/',
+      sameSite: 'lax'
+    })
+    return res
+  }
+
+  // Check for valid access cookie
   const cookie = request.cookies.get(COOKIE_NAME)
   if (cookie?.value === VALID_TOKEN) return NextResponse.next()
 
@@ -21,7 +36,7 @@ export function middleware(request: NextRequest) {
     )
   }
 
-  // page requests get redirected to gate
+  // Page requests get redirected to gate
   return NextResponse.redirect('https://knowdly.com/demo')
 }
 
