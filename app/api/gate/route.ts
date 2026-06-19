@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const COOKIE_NAME = 'knowdly_access'
-const VALID_TOKEN = 'a8073f7ba99a2b14302e9e80467a6038f658065575a0e30331c1418f8ee035d5'
+const VALID_TOKEN = '123d3ee19f254eeccbac647c94b39b1b1ac7c960e3d4df524eb60736a7d1f9c7'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
