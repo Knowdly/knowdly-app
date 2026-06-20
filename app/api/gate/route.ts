@@ -15,18 +15,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect('https://knowdly.com/demo')
   }
 
-  // Create a response that redirects to the library page
-  const response = new NextResponse(
-    `<html><head><meta http-equiv="refresh" content="0;url=/library"></head><body>Redirecting...</body></html>`,
-    { status: 200, headers: { 'Content-Type': 'text/html' } }
-  )
+  const libraryUrl = new URL('/library', request.url)
+  const response = NextResponse.redirect(libraryUrl)
 
-  //
   response.cookies.set(COOKIE_NAME, VALID_TOKEN, {
     httpOnly: true,
     secure: true,
     sameSite: 'lax',
-    maxAge: 60 * 60 * 2, // 2 hours
+    maxAge: 60 * 60 * 2,
     path: '/',
   })
 
