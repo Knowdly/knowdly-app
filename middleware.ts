@@ -1,13 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const COOKIE_NAME = 'knowdly_access'
-const VALID_TOKEN = 'a8073f7ba99a2b14302e9e80467a6038f658065575a0e30331c1418f8ee035d5'
+// Token now lives in the environment, not in source — set KNOWDLY_GATE_TOKEN
+// in .env.local and in Vercel (Production + Preview). Never hardcode it here.
+const VALID_TOKEN = process.env.KNOWDLY_GATE_TOKEN
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Always allow the gate endpoint through
   if (pathname === '/api/gate') return NextResponse.next()
+
+  // Fail closed: if the token isn't configured, deny everything rather than
+  // silently letting requests through. Better a broken deploy than an open one.
+  if (!VALID_TOKEN) {
+    console.error('KNOWDLY_GATE_TOKEN is not set — denying all access.')
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 503 })
+    }
+    return NextResponse.redirect('https://knowdly.com/demo')
+  }
 
   // Check if token is in URL — set cookie and redirect cleanly
   const urlToken = request.nextUrl.searchParams.get('token')

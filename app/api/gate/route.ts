@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const COOKIE_NAME = 'knowdly_access'
-const VALID_TOKEN = 'a8073f7ba99a2b14302e9e80467a6038f658065575a0e30331c1418f8ee035d5'
+// Same env var as middleware.ts — set KNOWDLY_GATE_TOKEN in .env.local and Vercel.
+const VALID_TOKEN = process.env.KNOWDLY_GATE_TOKEN
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -11,7 +12,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const token = searchParams.get('token')
 
-  if (token !== VALID_TOKEN) {
+  if (!VALID_TOKEN || token !== VALID_TOKEN) {
     return NextResponse.redirect('https://knowdly.com/demo')
   }
 
