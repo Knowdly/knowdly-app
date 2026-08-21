@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   const token = searchParams.get('token')
 
   if (!VALID_TOKEN || token !== VALID_TOKEN) {
-    return NextResponse.redirect('https://knowdly.com/demo')
+    return NextResponse.redirect('https://www.knowdly.com/demo')
   }
 
   const libraryUrl = new URL('/library', request.url)

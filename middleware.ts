@@ -18,7 +18,7 @@ export function middleware(request: NextRequest) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 503 })
     }
-    return NextResponse.redirect('https://knowdly.com/demo')
+    return NextResponse.redirect('https://www.knowdly.com/demo')
   }
 
   // Check if token is in URL — set cookie and redirect cleanly
@@ -49,7 +49,7 @@ export function middleware(request: NextRequest) {
   }
 
   // Page requests get redirected to gate
-  return NextResponse.redirect('https://knowdly.com/demo')
+  return NextResponse.redirect('https://www.knowdly.com/demo')
 }
 
 export const config = {
