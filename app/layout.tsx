@@ -26,7 +26,8 @@ export default function RootLayout({
           <div className="max-w-6xl mx-auto flex items-center justify-between">
 
             {/* logo */}
-            <a href="/" className="text-xl font-bold text-white tracking-tight">
+            {/* logo — links out to the real marketing site (Namecheap), not this app's own internal root, which is a stale, unused draft page */}
+            <a href="https://www.knowdly.com/" className="text-xl font-bold text-white tracking-tight">
               Know<span className="bg-gradient-to-br from-[#8b7bff] to-[#f7c26a] bg-clip-text text-transparent">dly</span>
             </a>
 
