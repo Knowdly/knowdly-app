@@ -284,8 +284,13 @@ export default function UploadPage() {
         )
         console.log('Transaction signed successfully. Proceeding with upload...')
       } catch (signErr) {
-        // Creator cancelled Freighter — nothing uploaded, clean stop
-        throw new Error('Upload cancelled — transaction was not signed.')
+        // Log the real error so it's actually diagnosable — a rejected
+        // signature, an unfunded account, a wrong-network mismatch in
+        // Freighter, and a bug building the transaction all used to look
+        // identical to the user and in the console. They shouldn't.
+        console.error('Signing failed — underlying error:', signErr)
+        const detail = signErr instanceof Error ? signErr.message : String(signErr)
+        throw new Error(`Upload cancelled — transaction was not signed. (${detail})`)
       }
       setProgress(30)
 
