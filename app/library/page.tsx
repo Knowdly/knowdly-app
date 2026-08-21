@@ -195,6 +195,12 @@ export default function LibraryPage() {
   // Also cached in localStorage for fast initial render.
   const [ownedBooks, setOwnedBooks] = useState<Set<string>>(new Set())
 
+  // count of books uploaded but not yet at 50 Arweave confirmations —
+  // shown so the library doesn't look identical to "nothing was ever
+  // uploaded" while a fresh upload is still propagating (typically
+  // 1-2 hours)
+  const [pendingCount, setPendingCount] = useState(0)
+
   // ── Fetch books ────────────────────────────────────────────────────────────
   // Calls /api/books which returns books from Supabase (primary) or
   // Arweave GraphQL (fallback), merged and deduplicated.
@@ -208,8 +214,10 @@ export default function LibraryPage() {
 
     // check and confirm any pending books on every library load
     try {
-      await fetch('/api/books/confirm')
-    } catch { /* non-fatal */ }
+      const confirmRes  = await fetch('/api/books/confirm')
+      const confirmData = await confirmRes.json()
+      setPendingCount(confirmData.pendingCount ?? 0)
+    } catch { /* non-fatal — pendingCount just stays at its last value */ }
 
     setLoading(true)
     setError(null)
@@ -483,11 +491,20 @@ export default function LibraryPage() {
 
       {/* ── RESULTS COUNT ── */}
       {!loading && !error && (
-        <div className="text-gray-500 text-sm mb-6">
+        <div className="text-gray-500 text-sm mb-2">
           {displayBooks.length} {displayBooks.length === 1 ? 'book' : 'books'} found
           {search   && ` for "${search}"`}
           {category && ` · ${category}`}
           {format   && ` · ${format}`}
+        </div>
+      )}
+
+      {/* ── PENDING CONFIRMATION NOTE — only when some books are already
+           showing; the empty-state block below covers the zero-books case
+           so this doesn't duplicate the message ── */}
+      {!loading && !error && pendingCount > 0 && displayBooks.length > 0 && (
+        <div className="text-indigo-400 text-sm mb-6">
+          {pendingCount} more {pendingCount === 1 ? 'book' : 'books'} pending Arweave confirmation — usually ready within a couple hours of upload
         </div>
       )}
 
@@ -584,10 +601,18 @@ export default function LibraryPage() {
         <div className="text-center py-20">
           <div className="text-5xl mb-4">📚</div>
           <div className="text-gray-400 text-lg mb-2">
-            {search ? `No books found for "${search}"` : 'No books yet'}
+            {search
+              ? `No books found for "${search}"`
+              : pendingCount > 0
+                ? 'Your book is on its way'
+                : 'No books yet'}
           </div>
           <div className="text-gray-600 text-sm">
-            {search ? 'Try a different search term' : 'Be the first to upload a book'}
+            {search
+              ? 'Try a different search term'
+              : pendingCount > 0
+                ? `${pendingCount} ${pendingCount === 1 ? 'book is' : 'books are'} pending Arweave confirmation — check back in a bit`
+                : 'Be the first to upload a book'}
           </div>
         </div>
       )}

@@ -35,7 +35,7 @@ export async function GET() {
       .eq('confirmed', false)
 
     if (error || !pending || pending.length === 0) {
-      return NextResponse.json({ confirmed: [] })
+      return NextResponse.json({ confirmed: [], pendingCount: 0 })
     }
 
     console.log(`Checking ${pending.length} unconfirmed books...`)
@@ -73,10 +73,13 @@ export async function GET() {
       }
     }))
 
-    return NextResponse.json({ confirmed: newlyConfirmed })
+    return NextResponse.json({
+      confirmed: newlyConfirmed,
+      pendingCount: pending.length - newlyConfirmed.length,
+    })
 
   } catch (err) {
     console.error('Confirmation check error:', err)
-    return NextResponse.json({ confirmed: [] })
+    return NextResponse.json({ confirmed: [], pendingCount: 0 })
   }
 }
