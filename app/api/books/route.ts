@@ -132,7 +132,7 @@ async function queryArweave(search: string, category: string, format: string): P
       transactions(
         first: 100
         sort: HEIGHT_DESC
-        tags: [{ name: "App-Name", values: ["Knowdly"] }]
+        tags: [{ name: "App-Name", values: ["Knowdly-Testnet"] }]
       ) {
         edges {
           node {
@@ -158,7 +158,7 @@ async function queryArweave(search: string, category: string, format: string): P
 
   for (const edge of edges) {
     const node: Node = edge.node
-    if (tag(node.tags, 'App-Name') !== 'Knowdly') continue
+    if (tag(node.tags, 'App-Name') !== 'Knowdly-Testnet') continue
     if (tag(node.tags, 'Type') === 'Book-Cover')  continue
     const title = tag(node.tags, 'Title') || tag(node.tags, 'Book-Title')
     if (!title) continue

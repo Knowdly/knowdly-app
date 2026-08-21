@@ -22,7 +22,7 @@
 //
 //   Content-Type  → actual image MIME type (image/jpeg, image/png, image/webp)
 //                   This tells browsers how to display the image directly
-//   App-Name      → 'Knowdly' — used to filter our transactions in GraphQL
+//   App-Name      → 'Knowdly-Testnet' — used to filter our transactions in GraphQL
 //   Type          → 'Book-Cover' — identifies this as a cover image
 //   Title         → book title — for context in GraphQL queries
 //   Author        → book author — for context in GraphQL queries
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
     // Content-Type is set to the actual image MIME type so browsers can
     // render the image directly from its Arweave URL
     transaction.addTag('Content-Type', cover.type)
-    transaction.addTag('App-Name',     'Knowdly')
+    transaction.addTag('App-Name',     'Knowdly-Testnet')
     transaction.addTag('Type',         'Book-Cover')  // identifies this as a cover
     transaction.addTag('Title',        title)         // for GraphQL filtering
     transaction.addTag('Author',       author)        // for GraphQL filtering

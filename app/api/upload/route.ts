@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     const transaction = await arweave.createTransaction({ data: fileBuffer }, jwk)
 
     transaction.addTag('Content-Type',   'application/octet-stream')
-    transaction.addTag('App-Name',       'Knowdly')
+    transaction.addTag('App-Name',       'Knowdly-Testnet')
     transaction.addTag('Content-Format', contentFormat)
     transaction.addTag('Content-Mime',   contentMime)
     transaction.addTag('Title',          title)
