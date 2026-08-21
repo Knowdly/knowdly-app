@@ -18,6 +18,13 @@ import {
 // TypeScript type for the connection state
 type WalletState = 'disconnected' | 'connecting' | 'connected' | 'not_installed'
 
+// localStorage key tracking that the user explicitly disconnected — Freighter
+// itself stays "allowed" at the extension level even after our disconnect
+// button runs, so without this flag checkConnection() silently reconnects
+// on every remount (page navigation), which looks like a bug where
+// disconnect "doesn't stick."
+const DISCONNECT_FLAG = 'knowdly_wallet_disconnected'
+
 // Props — optional callback so parent components know when wallet connects
 type Props = {
   onConnect?: (publicKey: string) => void
@@ -47,6 +54,13 @@ export default function WalletConnect({ onConnect }: Props) {
         return
       }
 
+      // respect an explicit prior disconnect — don't silently reconnect
+      // just because Freighter still has this site allowed
+      if (localStorage.getItem(DISCONNECT_FLAG) === 'true') {
+        setWalletState('disconnected')
+        return
+      }
+
       // use isAllowed to check if user previously approved — no popup
       const { isAllowed } = await import('@stellar/freighter-api')
       const allowed = await isAllowed()
@@ -71,6 +85,9 @@ export default function WalletConnect({ onConnect }: Props) {
   // handleConnect is called when the user clicks the Connect Wallet button
   async function handleConnect() {
     setWalletState('connecting')
+
+    // user is explicitly connecting — clear any prior disconnect flag
+    localStorage.removeItem(DISCONNECT_FLAG)
 
     try {
       // requestAccess opens the Freighter popup asking the user to approve
@@ -135,8 +152,10 @@ export default function WalletConnect({ onConnect }: Props) {
         {/* disconnect button */}
         <button
           onClick={() => {
-            // clear local state — Freighter itself stays connected
-            // but our app forgets the session
+            // set the flag so checkConnection() won't silently reconnect
+            // on the next page load or navigation — Freighter itself
+            // stays "allowed", but our app now remembers to ignore that
+            localStorage.setItem(DISCONNECT_FLAG, 'true')
             setPublicKey(null)
             setWalletState('disconnected')
           }}
