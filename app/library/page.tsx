@@ -127,7 +127,7 @@ function BookCover({ book }: { book: Book }) {
   const initial   = getTitleInitial(book.title)
 
   return (
-    <div className="relative w-full aspect-[2/3] rounded-xl overflow-hidden">
+    <div className="relative w-full h-48 rounded-xl overflow-hidden">
 
       {/* ── Styled placeholder ──────────────────────────────────────────────
            Always rendered — sits behind the image.
@@ -155,7 +155,7 @@ function BookCover({ book }: { book: Book }) {
         <img
           src={`${ARWEAVE_GATEWAY}/${book.coverTxId}`}
           alt={`Cover of ${book.title}`}
-          className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
             imgLoaded ? 'opacity-100' : 'opacity-0'
           }`}
           onLoad={()  => setImgLoaded(true)}
