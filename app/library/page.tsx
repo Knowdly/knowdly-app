@@ -127,7 +127,7 @@ function BookCover({ book }: { book: Book }) {
   const initial   = getTitleInitial(book.title)
 
   return (
-    <div className="relative w-full h-48 rounded-xl overflow-hidden">
+    <div className="relative w-full aspect-video rounded-xl overflow-hidden">
 
       {/* ── Styled placeholder ──────────────────────────────────────────────
            Always rendered — sits behind the image.
