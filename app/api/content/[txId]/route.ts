@@ -7,12 +7,17 @@ import { NextRequest, NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Gateways in priority order — arweave.net is authoritative
-// /raw/ endpoint returns pure file data without Arweave metadata wrapper
-const GATEWAYS = [
-  'https://arweave.net',
-  'https://permagate.io',
-]
+const ARWEAVE_HOST = process.env.ARWEAVE_HOST ?? 'localhost'
+const IS_LOCAL      = ARWEAVE_HOST === 'localhost'
+
+// Gateways in priority order — arweave.net is authoritative for real
+// content. When running against ArLocal, local content only ever exists
+// on localhost:1984 — real gateways would never have seen it, so trying
+// them first would just waste two failed round-trips before ever
+// reaching the one that could actually work.
+const GATEWAYS = IS_LOCAL
+  ? ['http://localhost:1984']
+  : ['https://arweave.net', 'https://permagate.io']
 
 export async function GET(
   request: NextRequest,
