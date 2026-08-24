@@ -503,7 +503,7 @@ export default function UploadPage() {
                 <img
                   src={coverPreview}
                   alt="Cover preview"
-                  className="w-24 h-32 object-cover rounded-lg border border-gray-700"
+                  className="w-40 aspect-video object-cover rounded-lg border border-gray-700"
                 />
                 <div className="flex flex-col gap-2 justify-center">
                   <p className="text-gray-400 text-sm">{coverFile?.name}</p>
