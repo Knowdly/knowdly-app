@@ -744,10 +744,14 @@ export default function UploadPage() {
             </div>
           )}
 
-          {/* ── ERROR ── */}
-          {status === 'error' && error && (
+          {/* ── ERROR ──
+               Shows whenever `error` is set, regardless of overall upload
+               `status` — cover/file validation errors happen before any
+               upload is ever attempted, so gating this on status === 'error'
+               meant those messages were being generated but never shown. */}
+          {error && (
             <div className="bg-red-950 border border-red-800 rounded-xl p-4">
-              <div className="text-red-400 font-medium mb-1">Upload failed</div>
+              <div className="text-red-400 font-medium mb-1">Error</div>
               <p className="text-red-300 text-xs leading-relaxed">{error}</p>
             </div>
           )}
