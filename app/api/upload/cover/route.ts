@@ -8,7 +8,7 @@
 //    They are stored as plain image data on Arweave so that anyone browsing
 //    the library can see them without needing to own the book.
 //
-// 2. Cover images are small (max 2MB) so they don't need chunked upload.
+// 2. Cover images can be up to 10MB so they don't need chunked upload.
 //    The standard arweave.createTransaction + sign + post flow is sufficient.
 //
 // 3. The cover TX ID is returned to the client and then:
@@ -69,9 +69,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'File must be an image' }, { status: 400 })
     }
 
-    // validate file size — 2MB limit keeps Arweave costs low and pages fast
-    if (cover.size > 2 * 1024 * 1024) {
-      return NextResponse.json({ error: 'Cover image must be under 2MB' }, { status: 400 })
+    // validate file size — 10MB limit accommodates AI-generated art
+    // (MidJourney etc. commonly export 3-8MB) while still keeping
+    // Arweave costs reasonable and library pages fast
+    if (cover.size > 10 * 1024 * 1024) {
+      return NextResponse.json({ error: 'Cover image must be under 10MB' }, { status: 400 })
     }
 
     // ── Initialise Arweave client ─────────────────────────────────────────

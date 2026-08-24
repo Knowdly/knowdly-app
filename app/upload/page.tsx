@@ -163,8 +163,8 @@ export default function UploadPage() {
     }
 
     // validate file size — covers should be small for fast loading
-    if (selected.size > 2 * 1024 * 1024) {
-      setError('Cover image must be under 2MB')
+    if (selected.size > 10 * 1024 * 1024) {
+      setError('Cover image must be under 10MB')
       return
     }
 
@@ -493,7 +493,7 @@ export default function UploadPage() {
             <label className="block text-sm font-medium text-gray-300 mb-2">
               Cover image
               <span className="text-gray-500 font-normal ml-2">
-                Optional · JPG, PNG, WebP · max 2MB
+                Optional · JPG, PNG, WebP · max 10MB
               </span>
             </label>
 
