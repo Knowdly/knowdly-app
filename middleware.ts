@@ -11,6 +11,10 @@ export function middleware(request: NextRequest) {
   // Always allow the gate endpoint through
   if (pathname === '/api/gate') return NextResponse.next()
 
+  // Vercel's Cron scheduler has no login cookie and never will — this route
+  // is verified separately via CRON_SECRET inside its own handler instead.
+  if (pathname === '/api/cron/keepalive') return NextResponse.next()
+
   // Fail closed: if the token isn't configured, deny everything rather than
   // silently letting requests through. Better a broken deploy than an open one.
   if (!VALID_TOKEN) {

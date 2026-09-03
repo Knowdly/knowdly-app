@@ -15,7 +15,16 @@ function getSupabase() {
   return createClient(url, key)
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  // Vercel automatically sends this header when its own Cron scheduler
+  // triggers the route, if CRON_SECRET is set in the project's env vars.
+  // This route is exempted from the app's password gate (Vercel Cron has
+  // no login cookie), so this is what actually secures it instead.
+  const authHeader = request.headers.get('authorization')
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const supabase = getSupabase()
     const { count, error } = await supabase
